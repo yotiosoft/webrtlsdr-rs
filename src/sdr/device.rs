@@ -1,4 +1,4 @@
-use std::{ffi::CStr, fmt, os::raw::c_char};
+use std::{fmt, os::raw::c_char};
 
 use super::raw;
 
@@ -16,6 +16,8 @@ pub struct SdrDeviceInfo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SdrError {
     UsbStringsUnavailable { index: u32, code: i32 },
+    OpenFailed { index: u32, code: i32 },
+    NullDeviceHandle { index: u32 },
 }
 
 impl fmt::Display for SdrError {
@@ -27,11 +29,62 @@ impl fmt::Display for SdrError {
                     "failed to read RTL-SDR USB strings for device {index}: librtlsdr returned {code}"
                 )
             }
+            Self::OpenFailed { index, code } => {
+                write!(
+                    formatter,
+                    "failed to open RTL-SDR device {index}: librtlsdr returned {code}"
+                )
+            }
+            Self::NullDeviceHandle { index } => {
+                write!(
+                    formatter,
+                    "failed to open RTL-SDR device {index}: librtlsdr returned a null handle"
+                )
+            }
         }
     }
 }
 
 impl std::error::Error for SdrError {}
+
+pub struct OpenedDevice {
+    raw: raw::DeviceHandle,
+    info: SdrDeviceInfo,
+}
+
+// The handle is only accessed through owned methods and is protected by the
+// session mutex when stored in server state. We intentionally do not implement
+// Sync, because concurrent direct access to a single librtlsdr handle is not
+// part of this abstraction.
+unsafe impl Send for OpenedDevice {}
+
+impl OpenedDevice {
+    pub fn info(&self) -> &SdrDeviceInfo {
+        &self.info
+    }
+}
+
+impl fmt::Debug for OpenedDevice {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OpenedDevice")
+            .field("info", &self.info)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Drop for OpenedDevice {
+    fn drop(&mut self) {
+        let result = raw::close_device(&mut self.raw);
+        if result < 0 {
+            tracing::warn!(
+                code = result,
+                index = self.info.index,
+                "failed to close RTL-SDR device"
+            );
+        }
+    }
+}
 
 pub fn list_devices() -> Result<Vec<SdrDeviceInfo>, SdrError> {
     // SAFETY: This librtlsdr function takes no pointers and returns the current
@@ -46,10 +99,18 @@ pub fn list_devices() -> Result<Vec<SdrDeviceInfo>, SdrError> {
     Ok(devices)
 }
 
+pub fn open_device(index: u32) -> Result<OpenedDevice, SdrError> {
+    let info = device_info(index)?;
+    let raw = raw::open_device(index).map_err(|error| match error {
+        raw::OpenDeviceError::OpenFailed { code } => SdrError::OpenFailed { index, code },
+        raw::OpenDeviceError::NullHandle => SdrError::NullDeviceHandle { index },
+    })?;
+
+    Ok(OpenedDevice { raw, info })
+}
+
 fn device_info(index: u32) -> Result<SdrDeviceInfo, SdrError> {
-    // SAFETY: `index` is in the range returned by librtlsdr. A null pointer is
-    // handled by `string_from_ptr`.
-    let name = unsafe { string_from_ptr(raw::rtlsdr_get_device_name(index)) };
+    let name = raw::device_name(index);
 
     let mut manufacturer = [0 as c_char; USB_STRING_BUFFER_LEN];
     let mut product = [0 as c_char; USB_STRING_BUFFER_LEN];
@@ -81,18 +142,6 @@ fn device_info(index: u32) -> Result<SdrDeviceInfo, SdrError> {
     })
 }
 
-unsafe fn string_from_ptr(value: *const c_char) -> String {
-    if value.is_null() {
-        return String::new();
-    }
-
-    // SAFETY: The caller provides a pointer returned by librtlsdr for a
-    // null-terminated device name string.
-    unsafe { CStr::from_ptr(value) }
-        .to_string_lossy()
-        .into_owned()
-}
-
 fn string_from_buffer(buffer: &[c_char]) -> String {
     let nul_position = buffer
         .iter()
@@ -107,25 +156,6 @@ fn string_from_buffer(buffer: &[c_char]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{ffi::CString, ptr};
-
-    #[test]
-    fn string_from_ptr_returns_empty_for_null() {
-        // SAFETY: This test intentionally verifies that null input is handled.
-        let value = unsafe { string_from_ptr(ptr::null()) };
-
-        assert_eq!(value, "");
-    }
-
-    #[test]
-    fn string_from_ptr_converts_c_string_lossily() {
-        let source = CString::new(b"RTL-SDR".as_slice()).expect("valid C string");
-
-        // SAFETY: `source` is a valid null-terminated C string for this scope.
-        let value = unsafe { string_from_ptr(source.as_ptr()) };
-
-        assert_eq!(value, "RTL-SDR");
-    }
 
     #[test]
     fn string_from_buffer_stops_at_first_nul() {

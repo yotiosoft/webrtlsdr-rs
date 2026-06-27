@@ -1,7 +1,9 @@
-use axum::{Json, http::StatusCode, response::IntoResponse};
+use axum::Json;
 use serde::Serialize;
 
 use crate::sdr::{self, SdrDeviceInfo};
+
+use super::ApiError;
 
 pub async fn list() -> Result<Json<ListDevicesResponse>, ApiError> {
     let devices = sdr::list_devices().map_err(|error| {
@@ -15,12 +17,12 @@ pub async fn list() -> Result<Json<ListDevicesResponse>, ApiError> {
 }
 
 #[derive(Serialize)]
-pub struct ListDevicesResponse {
+pub(crate) struct ListDevicesResponse {
     devices: Vec<DeviceResponse>,
 }
 
 #[derive(Serialize)]
-struct DeviceResponse {
+pub(crate) struct DeviceResponse {
     index: u32,
     name: String,
     manufacturer: String,
@@ -38,33 +40,4 @@ impl From<SdrDeviceInfo> for DeviceResponse {
             serial: device.serial,
         }
     }
-}
-
-pub struct ApiError {
-    status: StatusCode,
-    message: &'static str,
-}
-
-impl ApiError {
-    fn internal(message: &'static str) -> Self {
-        Self {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            message,
-        }
-    }
-}
-
-impl IntoResponse for ApiError {
-    fn into_response(self) -> axum::response::Response {
-        let body = Json(ErrorResponse {
-            error: self.message,
-        });
-
-        (self.status, body).into_response()
-    }
-}
-
-#[derive(Serialize)]
-struct ErrorResponse {
-    error: &'static str,
 }

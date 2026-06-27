@@ -5,4 +5,4 @@ pub mod device;
 pub mod raw;
 
 #[allow(unused_imports)]
-pub use device::{SdrDeviceInfo, SdrError, list_devices};
+pub use device::{OpenedDevice, SdrDeviceInfo, SdrError, list_devices, open_device};

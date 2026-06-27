@@ -52,9 +52,33 @@ When no RTL-SDR devices are connected, the endpoint returns an empty array:
 }
 ```
 
+Check the current RTL-SDR session:
+
+```sh
+curl http://127.0.0.1:3000/api/session
+```
+
+Connect the first RTL-SDR device:
+
+```sh
+curl -X POST http://127.0.0.1:3000/api/session/connect \
+  -H 'content-type: application/json' \
+  -d '{"index":0}'
+```
+
+Disconnect the current RTL-SDR device. This is safe to call even when no device
+is connected:
+
+```sh
+curl -X POST http://127.0.0.1:3000/api/session/disconnect
+```
+
+Connecting while another device is already open returns `409 Conflict`.
+
 ## RTL-SDR native dependency
 
-The Rust server links directly to `librtlsdr` for RTL-SDR device discovery.
+The Rust server links directly to `librtlsdr` for RTL-SDR device discovery and
+open/close session management.
 Install the development package before building on Linux, for example:
 
 ```sh
