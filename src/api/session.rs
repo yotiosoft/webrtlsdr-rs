@@ -2,6 +2,7 @@ use axum::{Json, extract::State};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    audio::PcmStats,
     dsp::DspStats,
     session::{GainMode, ReceiverSettings, SessionError, SessionSnapshot, SessionStats},
 };
@@ -363,6 +364,7 @@ pub struct SessionStatsResponse {
     last_block_bytes: Option<usize>,
     last_block_unix_ms: Option<u64>,
     dsp: DspStatsResponse,
+    pcm: PcmStatsResponse,
     last_error: Option<String>,
 }
 
@@ -376,6 +378,7 @@ impl From<SessionStats> for SessionStatsResponse {
             last_block_bytes: stats.last_block_bytes,
             last_block_unix_ms: stats.last_block_unix_ms,
             dsp: DspStatsResponse::from(stats.dsp),
+            pcm: PcmStatsResponse::from(stats.pcm),
             last_error: stats.last_error,
         }
     }
@@ -403,6 +406,31 @@ impl From<DspStats> for DspStatsResponse {
             last_processed_unix_ms: stats.last_processed_unix_ms,
             audio_peak: stats.audio_peak,
             audio_rms: stats.audio_rms,
+            last_error: stats.last_error,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct PcmStatsResponse {
+    frames_produced: u64,
+    samples_produced: u64,
+    bytes_produced: u64,
+    last_frame_bytes: usize,
+    peak_before_clamp: f32,
+    clipped_samples: u64,
+    last_error: Option<String>,
+}
+
+impl From<PcmStats> for PcmStatsResponse {
+    fn from(stats: PcmStats) -> Self {
+        Self {
+            frames_produced: stats.frames_produced,
+            samples_produced: stats.samples_produced,
+            bytes_produced: stats.bytes_produced,
+            last_frame_bytes: stats.last_frame_bytes,
+            peak_before_clamp: stats.peak_before_clamp,
+            clipped_samples: stats.clipped_samples,
             last_error: stats.last_error,
         }
     }

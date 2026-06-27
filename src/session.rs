@@ -9,6 +9,7 @@ use std::{
 };
 
 use crate::{
+    audio::{PcmEncoder, PcmFrame, PcmStats},
     dsp::{AudioBlock, DspConfig, DspProcessor, DspStats},
     sdr::{self, OpenedDevice, SdrDeviceInfo, SdrError},
 };
@@ -176,6 +177,10 @@ impl SessionState {
                 .as_ref()
                 .map(|stats| stats.dsp.clone())
                 .unwrap_or_default(),
+            pcm: receiver_stats
+                .as_ref()
+                .map(|stats| stats.pcm.clone())
+                .unwrap_or_default(),
             last_error: receiver_stats.and_then(|stats| stats.last_error),
         }
     }
@@ -249,6 +254,7 @@ pub struct SessionStats {
     pub last_block_bytes: Option<usize>,
     pub last_block_unix_ms: Option<u64>,
     pub dsp: DspStats,
+    pub pcm: PcmStats,
     pub last_error: Option<String>,
 }
 
@@ -258,6 +264,7 @@ struct ReceiveHandle {
     stop_requested: Arc<AtomicBool>,
     stats: Arc<Mutex<SessionStats>>,
     _latest_audio_block: Arc<Mutex<Option<AudioBlock>>>,
+    _latest_pcm_frame: Arc<Mutex<Option<PcmFrame>>>,
     thread: JoinHandle<OpenedDevice>,
 }
 
@@ -266,25 +273,31 @@ impl ReceiveHandle {
         let info = device.info().clone();
         let input_sample_rate_hz = device.sample_rate_hz();
         let dsp = DspProcessor::new(DspConfig::am(input_sample_rate_hz));
+        let pcm = PcmEncoder::default();
         let stop_requested = Arc::new(AtomicBool::new(false));
         let stats = Arc::new(Mutex::new(SessionStats {
             connected: true,
             receiving: true,
             dsp: dsp.stats(),
+            pcm: pcm.stats(),
             ..SessionStats::default()
         }));
         let latest_audio_block = Arc::new(Mutex::new(None));
+        let latest_pcm_frame = Arc::new(Mutex::new(None));
 
         let thread_stop_requested = Arc::clone(&stop_requested);
         let thread_stats = Arc::clone(&stats);
         let thread_latest_audio_block = Arc::clone(&latest_audio_block);
+        let thread_latest_pcm_frame = Arc::clone(&latest_pcm_frame);
         let thread = thread::spawn(move || {
             receive_loop(
                 &mut device,
                 dsp,
+                pcm,
                 thread_stop_requested,
                 thread_stats,
                 thread_latest_audio_block,
+                thread_latest_pcm_frame,
             );
             device
         });
@@ -294,6 +307,7 @@ impl ReceiveHandle {
             stop_requested,
             stats,
             _latest_audio_block: latest_audio_block,
+            _latest_pcm_frame: latest_pcm_frame,
             thread,
         }
     }
@@ -331,9 +345,11 @@ impl ReceiveHandle {
 fn receive_loop(
     device: &mut OpenedDevice,
     mut dsp: DspProcessor,
+    mut pcm: PcmEncoder,
     stop_requested: Arc<AtomicBool>,
     stats: Arc<Mutex<SessionStats>>,
     latest_audio_block: Arc<Mutex<Option<AudioBlock>>>,
+    latest_pcm_frame: Arc<Mutex<Option<PcmFrame>>>,
 ) {
     if let Err(error) = device.reset_buffer() {
         record_receive_error(&stats, &error);
@@ -352,14 +368,24 @@ fn receive_loop(
             Ok(n_read) => {
                 let audio_block = dsp.process_iq_u8(&buffer[..n_read]);
                 let audio_samples = audio_block.samples.len();
+                let pcm_frame = pcm.encode_block(&audio_block);
+                let pcm_frame_bytes = pcm_frame.as_ref().map(|frame| frame.payload.len());
+
                 if let Ok(mut latest_audio_block) = latest_audio_block.lock() {
                     *latest_audio_block = Some(audio_block);
                 }
-                record_receive_block(&stats, n_read, dsp.stats());
+                if let Some(frame) = pcm_frame {
+                    if let Ok(mut latest_pcm_frame) = latest_pcm_frame.lock() {
+                        *latest_pcm_frame = Some(frame);
+                    }
+                }
+
+                record_receive_block(&stats, n_read, dsp.stats(), pcm.stats());
                 if audio_samples > 0 {
                     tracing::debug!(
                         index = device.info().index,
                         audio_samples,
+                        pcm_frame_bytes,
                         "processed RTL-SDR IQ block through AM DSP"
                     );
                 }
@@ -377,7 +403,12 @@ fn receive_loop(
     }
 }
 
-fn record_receive_block(stats: &Mutex<SessionStats>, n_read: usize, dsp_stats: DspStats) {
+fn record_receive_block(
+    stats: &Mutex<SessionStats>,
+    n_read: usize,
+    dsp_stats: DspStats,
+    pcm_stats: PcmStats,
+) {
     let last_block_unix_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .ok()
@@ -389,6 +420,7 @@ fn record_receive_block(stats: &Mutex<SessionStats>, n_read: usize, dsp_stats: D
         stats.last_block_bytes = Some(n_read);
         stats.last_block_unix_ms = last_block_unix_ms;
         stats.dsp = dsp_stats;
+        stats.pcm = pcm_stats;
     }
 }
 

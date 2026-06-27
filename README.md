@@ -127,7 +127,10 @@ the total bytes read, the last block size, the last block timestamp as Unix
 milliseconds, and the last receive error if one occurred. It also includes DSP
 statistics under `dsp`: processed IQ bytes, produced AM audio samples, approximate
 audio sample rate, decimation ratio, audio peak/RMS, the last DSP timestamp, and
-the last DSP error if one occurred.
+the last DSP error if one occurred. The `pcm` section reports server-side
+conversion from internal `f32` audio into signed 16-bit little-endian mono PCM:
+frames, samples, total bytes, last frame size, pre-clamp peak, clipped samples,
+and the last PCM error if one occurred.
 
 For a quick DSP smoke test with RTL-SDR hardware, start reception and call the
 stats endpoint twice a few seconds apart:
@@ -138,10 +141,12 @@ sleep 2
 curl http://127.0.0.1:3000/api/session/stats
 ```
 
-During reception, both `bytes_read` and `dsp.audio_samples_produced` should
-increase. `dsp.audio_peak` and `dsp.audio_rms` should update as IQ blocks are
-AM-demodulated into internal `f32` audio samples. Audio streaming is not exposed
-yet; this confirms the server-side DSP pipeline only.
+During reception, `bytes_read`, `dsp.audio_samples_produced`,
+`pcm.frames_produced`, and `pcm.bytes_produced` should increase.
+`dsp.audio_peak`, `dsp.audio_rms`, and `pcm.peak_before_clamp` should update as
+IQ blocks are AM-demodulated into internal `f32` audio samples and converted to
+PCM. Audio streaming is not exposed yet; this confirms the server-side DSP and
+PCM conversion pipeline only.
 
 Stop reception. This is safe to call even when reception is not running:
 
