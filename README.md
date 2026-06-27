@@ -124,7 +124,24 @@ curl http://127.0.0.1:3000/api/session/stats
 
 The response includes whether reception is active, the number of blocks read,
 the total bytes read, the last block size, the last block timestamp as Unix
-milliseconds, and the last receive error if one occurred.
+milliseconds, and the last receive error if one occurred. It also includes DSP
+statistics under `dsp`: processed IQ bytes, produced AM audio samples, approximate
+audio sample rate, decimation ratio, audio peak/RMS, the last DSP timestamp, and
+the last DSP error if one occurred.
+
+For a quick DSP smoke test with RTL-SDR hardware, start reception and call the
+stats endpoint twice a few seconds apart:
+
+```sh
+curl http://127.0.0.1:3000/api/session/stats
+sleep 2
+curl http://127.0.0.1:3000/api/session/stats
+```
+
+During reception, both `bytes_read` and `dsp.audio_samples_produced` should
+increase. `dsp.audio_peak` and `dsp.audio_rms` should update as IQ blocks are
+AM-demodulated into internal `f32` audio samples. Audio streaming is not exposed
+yet; this confirms the server-side DSP pipeline only.
 
 Stop reception. This is safe to call even when reception is not running:
 

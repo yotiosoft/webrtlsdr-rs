@@ -8,7 +8,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::sdr::{self, OpenedDevice, SdrDeviceInfo, SdrError};
+use crate::{
+    dsp::{AudioBlock, DspConfig, DspProcessor, DspStats},
+    sdr::{self, OpenedDevice, SdrDeviceInfo, SdrError},
+};
 
 const IQ_BLOCK_BYTES: usize = 16 * 16_384;
 
@@ -169,6 +172,10 @@ impl SessionState {
             last_block_unix_ms: receiver_stats
                 .as_ref()
                 .and_then(|stats| stats.last_block_unix_ms),
+            dsp: receiver_stats
+                .as_ref()
+                .map(|stats| stats.dsp.clone())
+                .unwrap_or_default(),
             last_error: receiver_stats.and_then(|stats| stats.last_error),
         }
     }
@@ -233,7 +240,7 @@ pub enum GainMode {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct SessionStats {
     pub connected: bool,
     pub receiving: bool,
@@ -241,6 +248,7 @@ pub struct SessionStats {
     pub bytes_read: u64,
     pub last_block_bytes: Option<usize>,
     pub last_block_unix_ms: Option<u64>,
+    pub dsp: DspStats,
     pub last_error: Option<String>,
 }
 
@@ -249,23 +257,35 @@ struct ReceiveHandle {
     info: SdrDeviceInfo,
     stop_requested: Arc<AtomicBool>,
     stats: Arc<Mutex<SessionStats>>,
+    _latest_audio_block: Arc<Mutex<Option<AudioBlock>>>,
     thread: JoinHandle<OpenedDevice>,
 }
 
 impl ReceiveHandle {
     fn spawn(mut device: OpenedDevice) -> Self {
         let info = device.info().clone();
+        let input_sample_rate_hz = device.sample_rate_hz();
+        let dsp = DspProcessor::new(DspConfig::am(input_sample_rate_hz));
         let stop_requested = Arc::new(AtomicBool::new(false));
         let stats = Arc::new(Mutex::new(SessionStats {
             connected: true,
             receiving: true,
+            dsp: dsp.stats(),
             ..SessionStats::default()
         }));
+        let latest_audio_block = Arc::new(Mutex::new(None));
 
         let thread_stop_requested = Arc::clone(&stop_requested);
         let thread_stats = Arc::clone(&stats);
+        let thread_latest_audio_block = Arc::clone(&latest_audio_block);
         let thread = thread::spawn(move || {
-            receive_loop(&mut device, thread_stop_requested, thread_stats);
+            receive_loop(
+                &mut device,
+                dsp,
+                thread_stop_requested,
+                thread_stats,
+                thread_latest_audio_block,
+            );
             device
         });
 
@@ -273,6 +293,7 @@ impl ReceiveHandle {
             info,
             stop_requested,
             stats,
+            _latest_audio_block: latest_audio_block,
             thread,
         }
     }
@@ -309,8 +330,10 @@ impl ReceiveHandle {
 
 fn receive_loop(
     device: &mut OpenedDevice,
+    mut dsp: DspProcessor,
     stop_requested: Arc<AtomicBool>,
     stats: Arc<Mutex<SessionStats>>,
+    latest_audio_block: Arc<Mutex<Option<AudioBlock>>>,
 ) {
     if let Err(error) = device.reset_buffer() {
         record_receive_error(&stats, &error);
@@ -326,7 +349,21 @@ fn receive_loop(
                 record_receive_message(&stats, message);
                 break;
             }
-            Ok(n_read) => record_receive_block(&stats, n_read),
+            Ok(n_read) => {
+                let audio_block = dsp.process_iq_u8(&buffer[..n_read]);
+                let audio_samples = audio_block.samples.len();
+                if let Ok(mut latest_audio_block) = latest_audio_block.lock() {
+                    *latest_audio_block = Some(audio_block);
+                }
+                record_receive_block(&stats, n_read, dsp.stats());
+                if audio_samples > 0 {
+                    tracing::debug!(
+                        index = device.info().index,
+                        audio_samples,
+                        "processed RTL-SDR IQ block through AM DSP"
+                    );
+                }
+            }
             Err(error) => {
                 tracing::error!(%error, "failed to read RTL-SDR IQ samples");
                 record_receive_error(&stats, &error);
@@ -340,7 +377,7 @@ fn receive_loop(
     }
 }
 
-fn record_receive_block(stats: &Mutex<SessionStats>, n_read: usize) {
+fn record_receive_block(stats: &Mutex<SessionStats>, n_read: usize, dsp_stats: DspStats) {
     let last_block_unix_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .ok()
@@ -351,6 +388,7 @@ fn record_receive_block(stats: &Mutex<SessionStats>, n_read: usize) {
         stats.bytes_read = stats.bytes_read.saturating_add(n_read as u64);
         stats.last_block_bytes = Some(n_read);
         stats.last_block_unix_ms = last_block_unix_ms;
+        stats.dsp = dsp_stats;
     }
 }
 

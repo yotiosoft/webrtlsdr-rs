@@ -1,7 +1,10 @@
 use axum::{Json, extract::State};
 use serde::{Deserialize, Serialize};
 
-use crate::session::{GainMode, ReceiverSettings, SessionError, SessionSnapshot, SessionStats};
+use crate::{
+    dsp::DspStats,
+    session::{GainMode, ReceiverSettings, SessionError, SessionSnapshot, SessionStats},
+};
 
 use super::{ApiError, ApiState, devices::DeviceResponse};
 
@@ -359,6 +362,7 @@ pub struct SessionStatsResponse {
     bytes_read: u64,
     last_block_bytes: Option<usize>,
     last_block_unix_ms: Option<u64>,
+    dsp: DspStatsResponse,
     last_error: Option<String>,
 }
 
@@ -371,6 +375,34 @@ impl From<SessionStats> for SessionStatsResponse {
             bytes_read: stats.bytes_read,
             last_block_bytes: stats.last_block_bytes,
             last_block_unix_ms: stats.last_block_unix_ms,
+            dsp: DspStatsResponse::from(stats.dsp),
+            last_error: stats.last_error,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct DspStatsResponse {
+    iq_bytes_processed: u64,
+    audio_samples_produced: u64,
+    audio_sample_rate_hz: u32,
+    decimation_ratio: usize,
+    last_processed_unix_ms: Option<u64>,
+    audio_peak: f32,
+    audio_rms: f32,
+    last_error: Option<String>,
+}
+
+impl From<DspStats> for DspStatsResponse {
+    fn from(stats: DspStats) -> Self {
+        Self {
+            iq_bytes_processed: stats.iq_bytes_processed,
+            audio_samples_produced: stats.audio_samples_produced,
+            audio_sample_rate_hz: stats.audio_sample_rate_hz,
+            decimation_ratio: stats.decimation_ratio,
+            last_processed_unix_ms: stats.last_processed_unix_ms,
+            audio_peak: stats.audio_peak,
+            audio_rms: stats.audio_rms,
             last_error: stats.last_error,
         }
     }
