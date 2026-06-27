@@ -26,6 +26,9 @@ pub fn router() -> Router {
             "/api/session/disconnect",
             axum::routing::post(session::disconnect),
         )
+        .route("/api/session/start", axum::routing::post(session::start))
+        .route("/api/session/stop", axum::routing::post(session::stop))
+        .route("/api/session/stats", get(session::stats))
         .route("/api/session/tune", axum::routing::post(session::tune))
         .route(
             "/api/session/sample-rate",

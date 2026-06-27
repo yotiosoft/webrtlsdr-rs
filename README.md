@@ -110,10 +110,36 @@ curl -X POST http://127.0.0.1:3000/api/session/gain \
 
 Setting APIs return `409 Conflict` when no RTL-SDR device is connected.
 
+Start reading raw interleaved `u8` IQ samples from the connected device:
+
+```sh
+curl -X POST http://127.0.0.1:3000/api/session/start
+```
+
+Check receive statistics:
+
+```sh
+curl http://127.0.0.1:3000/api/session/stats
+```
+
+The response includes whether reception is active, the number of blocks read,
+the total bytes read, the last block size, the last block timestamp as Unix
+milliseconds, and the last receive error if one occurred.
+
+Stop reception. This is safe to call even when reception is not running:
+
+```sh
+curl -X POST http://127.0.0.1:3000/api/session/stop
+```
+
+Disconnecting also stops the receive loop before closing the RTL-SDR device.
+Tuning, sample-rate, and gain changes return `409 Conflict` while reception is
+running because the receive thread owns the device handle.
+
 ## RTL-SDR native dependency
 
 The Rust server links directly to `librtlsdr` for RTL-SDR device discovery and
-open/close session management.
+open/close session management and synchronous IQ sample reads.
 Install the development package before building on Linux, for example:
 
 ```sh

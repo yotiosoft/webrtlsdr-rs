@@ -1,7 +1,7 @@
 use axum::{Json, extract::State};
 use serde::{Deserialize, Serialize};
 
-use crate::session::{GainMode, ReceiverSettings, SessionError, SessionSnapshot};
+use crate::session::{GainMode, ReceiverSettings, SessionError, SessionSnapshot, SessionStats};
 
 use super::{ApiError, ApiState, devices::DeviceResponse};
 
@@ -28,9 +28,15 @@ pub async fn connect(
         Err(SessionError::AlreadyConnected) => {
             Err(ApiError::conflict("an RTL-SDR device is already connected"))
         }
+        Err(SessionError::AlreadyReceiving) => {
+            Err(ApiError::conflict("RTL-SDR reception is already running"))
+        }
         Err(SessionError::Sdr(error)) => {
             tracing::error!(%error, index = request.index, "failed to connect RTL-SDR device");
             Err(ApiError::internal("failed to connect RTL-SDR device"))
+        }
+        Err(SessionError::ReceiveThreadPanicked) => {
+            unreachable!("connect cannot join a receive thread")
         }
         Err(SessionError::NotConnected) => unreachable!("connect cannot require a prior session"),
     }
@@ -42,9 +48,68 @@ pub async fn disconnect(State(state): State<ApiState>) -> Result<Json<SessionRes
         ApiError::internal("failed to update RTL-SDR session")
     })?;
 
-    session.disconnect();
+    if let Err(error) = session.disconnect() {
+        tracing::error!(%error, "failed to stop RTL-SDR reception before disconnect");
+        return Err(ApiError::internal("failed to disconnect RTL-SDR device"));
+    }
 
     Ok(Json(SessionResponse::from(session.snapshot())))
+}
+
+pub async fn start(State(state): State<ApiState>) -> Result<Json<ReceiveStateResponse>, ApiError> {
+    let mut session = state.session.lock().map_err(|error| {
+        tracing::error!(%error, "session mutex is poisoned");
+        ApiError::internal("failed to update RTL-SDR session")
+    })?;
+
+    match session.start_receiving() {
+        Ok(()) => Ok(Json(ReceiveStateResponse { receiving: true })),
+        Err(SessionError::NotConnected) => {
+            Err(ApiError::conflict("no RTL-SDR device is connected"))
+        }
+        Err(SessionError::AlreadyReceiving) => {
+            Err(ApiError::conflict("RTL-SDR reception is already running"))
+        }
+        Err(SessionError::Sdr(error)) => {
+            tracing::error!(%error, "failed to start RTL-SDR reception");
+            Err(ApiError::internal("failed to start RTL-SDR reception"))
+        }
+        Err(SessionError::AlreadyConnected) => unreachable!("start cannot connect a session"),
+        Err(SessionError::ReceiveThreadPanicked) => {
+            unreachable!("start cannot join a receive thread")
+        }
+    }
+}
+
+pub async fn stop(State(state): State<ApiState>) -> Result<Json<ReceiveStateResponse>, ApiError> {
+    let mut session = state.session.lock().map_err(|error| {
+        tracing::error!(%error, "session mutex is poisoned");
+        ApiError::internal("failed to update RTL-SDR session")
+    })?;
+
+    match session.stop_receiving() {
+        Ok(()) => Ok(Json(ReceiveStateResponse { receiving: false })),
+        Err(SessionError::ReceiveThreadPanicked) => {
+            tracing::error!("RTL-SDR receive thread panicked while stopping");
+            Err(ApiError::internal("failed to stop RTL-SDR reception"))
+        }
+        Err(SessionError::NotConnected) => unreachable!("stop is idempotent without a session"),
+        Err(SessionError::AlreadyReceiving) => unreachable!("stop cannot start reception"),
+        Err(SessionError::AlreadyConnected) => unreachable!("stop cannot connect a session"),
+        Err(SessionError::Sdr(error)) => {
+            tracing::error!(%error, "failed to stop RTL-SDR reception");
+            Err(ApiError::internal("failed to stop RTL-SDR reception"))
+        }
+    }
+}
+
+pub async fn stats(State(state): State<ApiState>) -> Result<Json<SessionStatsResponse>, ApiError> {
+    let session = state.session.lock().map_err(|error| {
+        tracing::error!(%error, "session mutex is poisoned");
+        ApiError::internal("failed to read RTL-SDR session")
+    })?;
+
+    Ok(Json(SessionStatsResponse::from(session.stats())))
 }
 
 pub async fn tune(
@@ -70,6 +135,12 @@ pub async fn tune(
         Err(SessionError::Sdr(error)) => {
             tracing::error!(%error, "failed to tune RTL-SDR device");
             Err(ApiError::internal("failed to tune RTL-SDR device"))
+        }
+        Err(SessionError::AlreadyReceiving) => {
+            Err(ApiError::conflict("RTL-SDR reception is already running"))
+        }
+        Err(SessionError::ReceiveThreadPanicked) => {
+            unreachable!("tuning cannot join a receive thread")
         }
         Err(SessionError::AlreadyConnected) => unreachable!("tuning cannot create a session"),
     }
@@ -99,6 +170,12 @@ pub async fn sample_rate(
             tracing::error!(%error, "failed to set RTL-SDR sample rate");
             Err(ApiError::internal("failed to set RTL-SDR sample rate"))
         }
+        Err(SessionError::AlreadyReceiving) => {
+            Err(ApiError::conflict("RTL-SDR reception is already running"))
+        }
+        Err(SessionError::ReceiveThreadPanicked) => {
+            unreachable!("sample-rate setting cannot join a receive thread")
+        }
         Err(SessionError::AlreadyConnected) => {
             unreachable!("sample-rate setting cannot create a session")
         }
@@ -127,6 +204,12 @@ pub async fn gain(
                 tracing::error!(%error, "failed to set RTL-SDR auto gain");
                 Err(ApiError::internal("failed to set RTL-SDR gain"))
             }
+            Err(SessionError::AlreadyReceiving) => {
+                Err(ApiError::conflict("RTL-SDR reception is already running"))
+            }
+            Err(SessionError::ReceiveThreadPanicked) => {
+                unreachable!("gain setting cannot join a receive thread")
+            }
             Err(SessionError::AlreadyConnected) => {
                 unreachable!("gain setting cannot create a session")
             }
@@ -147,6 +230,12 @@ pub async fn gain(
                 Err(SessionError::Sdr(error)) => {
                     tracing::error!(%error, gain_tenths_db, "failed to set RTL-SDR manual gain");
                     Err(ApiError::internal("failed to set RTL-SDR gain"))
+                }
+                Err(SessionError::AlreadyReceiving) => {
+                    Err(ApiError::conflict("RTL-SDR reception is already running"))
+                }
+                Err(SessionError::ReceiveThreadPanicked) => {
+                    unreachable!("gain setting cannot join a receive thread")
                 }
                 Err(SessionError::AlreadyConnected) => {
                     unreachable!("gain setting cannot create a session")
@@ -210,8 +299,14 @@ pub enum GainModeResponse {
 }
 
 #[derive(Serialize)]
+pub struct ReceiveStateResponse {
+    receiving: bool,
+}
+
+#[derive(Serialize)]
 pub struct SessionResponse {
     connected: bool,
+    receiving: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     device: Option<DeviceResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -222,6 +317,7 @@ impl From<SessionSnapshot> for SessionResponse {
     fn from(snapshot: SessionSnapshot) -> Self {
         Self {
             connected: snapshot.connected(),
+            receiving: snapshot.receiving,
             device: snapshot.device.map(DeviceResponse::from),
             settings: snapshot.settings.map(SettingsResponse::from),
         }
@@ -251,6 +347,31 @@ impl From<ReceiverSettings> for SettingsResponse {
             sample_rate_hz: settings.sample_rate_hz,
             gain_mode,
             gain_tenths_db,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct SessionStatsResponse {
+    connected: bool,
+    receiving: bool,
+    blocks_read: u64,
+    bytes_read: u64,
+    last_block_bytes: Option<usize>,
+    last_block_unix_ms: Option<u64>,
+    last_error: Option<String>,
+}
+
+impl From<SessionStats> for SessionStatsResponse {
+    fn from(stats: SessionStats) -> Self {
+        Self {
+            connected: stats.connected,
+            receiving: stats.receiving,
+            blocks_read: stats.blocks_read,
+            bytes_read: stats.bytes_read,
+            last_block_bytes: stats.last_block_bytes,
+            last_block_unix_ms: stats.last_block_unix_ms,
+            last_error: stats.last_error,
         }
     }
 }

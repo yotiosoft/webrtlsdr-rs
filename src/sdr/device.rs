@@ -31,6 +31,19 @@ pub enum SdrError {
         setting: &'static str,
         code: i32,
     },
+    BufferResetFailed {
+        index: u32,
+        code: i32,
+    },
+    ReadFailed {
+        index: u32,
+        code: i32,
+    },
+    InvalidReadLength {
+        index: u32,
+        n_read: i32,
+        buffer_len: usize,
+    },
 }
 
 impl fmt::Display for SdrError {
@@ -62,6 +75,28 @@ impl fmt::Display for SdrError {
                 write!(
                     formatter,
                     "failed to set RTL-SDR {setting} for device {index}: librtlsdr returned {code}"
+                )
+            }
+            Self::BufferResetFailed { index, code } => {
+                write!(
+                    formatter,
+                    "failed to reset RTL-SDR buffer for device {index}: librtlsdr returned {code}"
+                )
+            }
+            Self::ReadFailed { index, code } => {
+                write!(
+                    formatter,
+                    "failed to read RTL-SDR IQ samples for device {index}: librtlsdr returned {code}"
+                )
+            }
+            Self::InvalidReadLength {
+                index,
+                n_read,
+                buffer_len,
+            } => {
+                write!(
+                    formatter,
+                    "RTL-SDR device {index} reported invalid read length {n_read} for buffer length {buffer_len}"
                 )
             }
         }
@@ -119,6 +154,43 @@ impl OpenedDevice {
 
     pub fn tuner_gain_tenths_db(&self) -> i32 {
         raw::get_tuner_gain(&self.raw)
+    }
+
+    pub fn reset_buffer(&mut self) -> Result<(), SdrError> {
+        let code = raw::reset_buffer(&mut self.raw);
+        if code < 0 {
+            return Err(SdrError::BufferResetFailed {
+                index: self.info.index,
+                code,
+            });
+        }
+
+        Ok(())
+    }
+
+    pub fn read_sync(&mut self, buffer: &mut [u8]) -> Result<usize, SdrError> {
+        let (code, n_read) = raw::read_sync(&mut self.raw, buffer);
+        if code < 0 {
+            return Err(SdrError::ReadFailed {
+                index: self.info.index,
+                code,
+            });
+        }
+
+        let n_read_usize = usize::try_from(n_read).map_err(|_| SdrError::InvalidReadLength {
+            index: self.info.index,
+            n_read,
+            buffer_len: buffer.len(),
+        })?;
+        if n_read_usize > buffer.len() {
+            return Err(SdrError::InvalidReadLength {
+                index: self.info.index,
+                n_read,
+                buffer_len: buffer.len(),
+            });
+        }
+
+        Ok(n_read_usize)
     }
 
     fn check_setting_result(&self, setting: &'static str, code: i32) -> Result<(), SdrError> {

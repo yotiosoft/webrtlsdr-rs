@@ -6,7 +6,7 @@
 use std::{
     ffi::CStr,
     marker::{PhantomData, PhantomPinned},
-    os::raw::{c_char, c_int, c_uint},
+    os::raw::{c_char, c_int, c_uint, c_void},
     ptr,
     ptr::NonNull,
 };
@@ -46,6 +46,13 @@ unsafe extern "C" {
     pub fn rtlsdr_set_tuner_gain_mode(dev: *mut rtlsdr_dev_t, mode: c_int) -> c_int;
     pub fn rtlsdr_set_tuner_gain(dev: *mut rtlsdr_dev_t, gain: c_int) -> c_int;
     pub fn rtlsdr_get_tuner_gain(dev: *mut rtlsdr_dev_t) -> c_int;
+    pub fn rtlsdr_reset_buffer(dev: *mut rtlsdr_dev_t) -> c_int;
+    pub fn rtlsdr_read_sync(
+        dev: *mut rtlsdr_dev_t,
+        buf: *mut c_void,
+        len: c_int,
+        n_read: *mut c_int,
+    ) -> c_int;
 }
 
 pub(crate) fn device_name(index: u32) -> String {
@@ -118,6 +125,33 @@ pub(crate) fn get_tuner_gain(handle: &DeviceHandle) -> i32 {
     // SAFETY: `DeviceHandle` can only be constructed by `open_device`, which
     // guarantees a valid librtlsdr handle for the duration of this call.
     unsafe { rtlsdr_get_tuner_gain(handle.raw.as_ptr()) as i32 }
+}
+
+pub(crate) fn reset_buffer(handle: &mut DeviceHandle) -> i32 {
+    // SAFETY: `DeviceHandle` can only be constructed by `open_device`, which
+    // guarantees a valid librtlsdr handle for the duration of this call.
+    unsafe { rtlsdr_reset_buffer(handle.raw.as_ptr()) as i32 }
+}
+
+pub(crate) fn read_sync(handle: &mut DeviceHandle, buffer: &mut [u8]) -> (i32, i32) {
+    let Ok(length) = c_int::try_from(buffer.len()) else {
+        return (-1, 0);
+    };
+    let mut n_read = 0;
+
+    // SAFETY: `DeviceHandle` is a valid librtlsdr handle, `buffer` is valid for
+    // writes of `length` bytes, and `n_read` is a valid out-pointer for the
+    // duration of this blocking call.
+    let result = unsafe {
+        rtlsdr_read_sync(
+            handle.raw.as_ptr(),
+            buffer.as_mut_ptr().cast::<c_void>(),
+            length,
+            &mut n_read,
+        )
+    };
+
+    (result as i32, n_read as i32)
 }
 
 unsafe fn string_from_ptr(value: *const c_char) -> String {
