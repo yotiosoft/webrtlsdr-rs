@@ -12,6 +12,7 @@ use crate::{
     audio::{PcmEncoder, PcmFrame, PcmStats},
     dsp::{AudioBlock, DspConfig, DspProcessor, DspStats},
     sdr::{self, OpenedDevice, SdrDeviceInfo, SdrError},
+    stream::AudioStreamHub,
 };
 
 const IQ_BLOCK_BYTES: usize = 16 * 16_384;
@@ -128,13 +129,13 @@ impl SessionState {
         Ok(actual_gain_tenths_db)
     }
 
-    pub fn start_receiving(&mut self) -> Result<(), SessionError> {
+    pub fn start_receiving(&mut self, audio_stream: AudioStreamHub) -> Result<(), SessionError> {
         if self.receiver.is_some() {
             return Err(SessionError::AlreadyReceiving);
         }
 
         let device = self.connected.take().ok_or(SessionError::NotConnected)?;
-        self.receiver = Some(ReceiveHandle::spawn(device));
+        self.receiver = Some(ReceiveHandle::spawn(device, audio_stream));
 
         Ok(())
     }
@@ -269,7 +270,7 @@ struct ReceiveHandle {
 }
 
 impl ReceiveHandle {
-    fn spawn(mut device: OpenedDevice) -> Self {
+    fn spawn(mut device: OpenedDevice, audio_stream: AudioStreamHub) -> Self {
         let info = device.info().clone();
         let input_sample_rate_hz = device.sample_rate_hz();
         let dsp = DspProcessor::new(DspConfig::am(input_sample_rate_hz));
@@ -298,6 +299,7 @@ impl ReceiveHandle {
                 thread_stats,
                 thread_latest_audio_block,
                 thread_latest_pcm_frame,
+                audio_stream,
             );
             device
         });
@@ -350,6 +352,7 @@ fn receive_loop(
     stats: Arc<Mutex<SessionStats>>,
     latest_audio_block: Arc<Mutex<Option<AudioBlock>>>,
     latest_pcm_frame: Arc<Mutex<Option<PcmFrame>>>,
+    audio_stream: AudioStreamHub,
 ) {
     if let Err(error) = device.reset_buffer() {
         record_receive_error(&stats, &error);
@@ -376,8 +379,9 @@ fn receive_loop(
                 }
                 if let Some(frame) = pcm_frame {
                     if let Ok(mut latest_pcm_frame) = latest_pcm_frame.lock() {
-                        *latest_pcm_frame = Some(frame);
+                        *latest_pcm_frame = Some(frame.clone());
                     }
+                    audio_stream.publish(frame);
                 }
 
                 record_receive_block(&stats, n_read, dsp.stats(), pcm.stats());

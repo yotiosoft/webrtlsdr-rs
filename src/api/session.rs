@@ -5,6 +5,7 @@ use crate::{
     audio::PcmStats,
     dsp::DspStats,
     session::{GainMode, ReceiverSettings, SessionError, SessionSnapshot, SessionStats},
+    stream::StreamStats,
 };
 
 use super::{ApiError, ApiState, devices::DeviceResponse};
@@ -66,7 +67,7 @@ pub async fn start(State(state): State<ApiState>) -> Result<Json<ReceiveStateRes
         ApiError::internal("failed to update RTL-SDR session")
     })?;
 
-    match session.start_receiving() {
+    match session.start_receiving(state.audio_stream.clone()) {
         Ok(()) => Ok(Json(ReceiveStateResponse { receiving: true })),
         Err(SessionError::NotConnected) => {
             Err(ApiError::conflict("no RTL-SDR device is connected"))
@@ -113,7 +114,10 @@ pub async fn stats(State(state): State<ApiState>) -> Result<Json<SessionStatsRes
         ApiError::internal("failed to read RTL-SDR session")
     })?;
 
-    Ok(Json(SessionStatsResponse::from(session.stats())))
+    Ok(Json(SessionStatsResponse::from_stats(
+        session.stats(),
+        state.audio_stream.stats(),
+    )))
 }
 
 pub async fn tune(
@@ -365,11 +369,18 @@ pub struct SessionStatsResponse {
     last_block_unix_ms: Option<u64>,
     dsp: DspStatsResponse,
     pcm: PcmStatsResponse,
+    stream: StreamStatsResponse,
     last_error: Option<String>,
 }
 
 impl From<SessionStats> for SessionStatsResponse {
     fn from(stats: SessionStats) -> Self {
+        Self::from_stats(stats, StreamStats::default())
+    }
+}
+
+impl SessionStatsResponse {
+    fn from_stats(stats: SessionStats, stream: StreamStats) -> Self {
         Self {
             connected: stats.connected,
             receiving: stats.receiving,
@@ -379,6 +390,7 @@ impl From<SessionStats> for SessionStatsResponse {
             last_block_unix_ms: stats.last_block_unix_ms,
             dsp: DspStatsResponse::from(stats.dsp),
             pcm: PcmStatsResponse::from(stats.pcm),
+            stream: StreamStatsResponse::from(stream),
             last_error: stats.last_error,
         }
     }
@@ -431,6 +443,31 @@ impl From<PcmStats> for PcmStatsResponse {
             last_frame_bytes: stats.last_frame_bytes,
             peak_before_clamp: stats.peak_before_clamp,
             clipped_samples: stats.clipped_samples,
+            last_error: stats.last_error,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct StreamStatsResponse {
+    active_clients: usize,
+    frames_broadcast: u64,
+    bytes_broadcast: u64,
+    frames_dropped: u64,
+    last_client_connected_unix_ms: Option<u64>,
+    last_client_disconnected_unix_ms: Option<u64>,
+    last_error: Option<String>,
+}
+
+impl From<StreamStats> for StreamStatsResponse {
+    fn from(stats: StreamStats) -> Self {
+        Self {
+            active_clients: stats.active_clients,
+            frames_broadcast: stats.frames_broadcast,
+            bytes_broadcast: stats.bytes_broadcast,
+            frames_dropped: stats.frames_dropped,
+            last_client_connected_unix_ms: stats.last_client_connected_unix_ms,
+            last_client_disconnected_unix_ms: stats.last_client_disconnected_unix_ms,
             last_error: stats.last_error,
         }
     }

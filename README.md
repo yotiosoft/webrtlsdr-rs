@@ -142,11 +142,28 @@ curl http://127.0.0.1:3000/api/session/stats
 ```
 
 During reception, `bytes_read`, `dsp.audio_samples_produced`,
-`pcm.frames_produced`, and `pcm.bytes_produced` should increase.
-`dsp.audio_peak`, `dsp.audio_rms`, and `pcm.peak_before_clamp` should update as
-IQ blocks are AM-demodulated into internal `f32` audio samples and converted to
-PCM. Audio streaming is not exposed yet; this confirms the server-side DSP and
-PCM conversion pipeline only.
+`pcm.frames_produced`, `pcm.bytes_produced`, `stream.frames_broadcast`, and
+`stream.bytes_broadcast` should increase. `dsp.audio_peak`, `dsp.audio_rms`,
+and `pcm.peak_before_clamp` should update as IQ blocks are AM-demodulated into
+internal `f32` audio samples and converted to PCM.
+
+The server also exposes raw mono signed 16-bit little-endian PCM over
+WebSocket:
+
+```sh
+websocat ws://127.0.0.1:3000/ws/audio
+```
+
+On connect, the first message is text JSON metadata:
+
+```json
+{"type":"audio_format","format":"i16le","channels":1,"sample_rate_hz":48000}
+```
+
+After reception starts, subsequent WebSocket messages are binary PCM payloads
+with no JSON wrapper. The `stream` section of `/api/session/stats` reports
+active WebSocket clients, frames and bytes broadcast, dropped frames from lagging
+clients, the last connect/disconnect timestamps, and the last stream error.
 
 Stop reception. This is safe to call even when reception is not running:
 
