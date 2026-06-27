@@ -22,6 +22,36 @@ Health check:
 curl http://127.0.0.1:3000/health
 ```
 
+List connected RTL-SDR devices:
+
+```sh
+curl http://127.0.0.1:3000/api/devices
+```
+
+The response is JSON:
+
+```json
+{
+  "devices": [
+    {
+      "index": 0,
+      "name": "Generic RTL2832U OEM",
+      "manufacturer": "Realtek",
+      "product": "RTL2838UHIDIR",
+      "serial": "00000001"
+    }
+  ]
+}
+```
+
+When no RTL-SDR devices are connected, the endpoint returns an empty array:
+
+```json
+{
+  "devices": []
+}
+```
+
 ## RTL-SDR native dependency
 
 The Rust server links directly to `librtlsdr` for RTL-SDR device discovery.
