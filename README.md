@@ -75,6 +75,41 @@ curl -X POST http://127.0.0.1:3000/api/session/disconnect
 
 Connecting while another device is already open returns `409 Conflict`.
 
+Tune the connected RTL-SDR device:
+
+```sh
+curl -X POST http://127.0.0.1:3000/api/session/tune \
+  -H 'content-type: application/json' \
+  -d '{"frequency_hz":100000000}'
+```
+
+Set the sample rate:
+
+```sh
+curl -X POST http://127.0.0.1:3000/api/session/sample-rate \
+  -H 'content-type: application/json' \
+  -d '{"sample_rate_hz":2048000}'
+```
+
+Set tuner gain to automatic mode:
+
+```sh
+curl -X POST http://127.0.0.1:3000/api/session/gain \
+  -H 'content-type: application/json' \
+  -d '{"mode":"auto"}'
+```
+
+Set tuner gain manually. Manual gain uses librtlsdr's 0.1 dB integer unit, so
+`280` means 28.0 dB:
+
+```sh
+curl -X POST http://127.0.0.1:3000/api/session/gain \
+  -H 'content-type: application/json' \
+  -d '{"mode":"manual","gain_tenths_db":280}'
+```
+
+Setting APIs return `409 Conflict` when no RTL-SDR device is connected.
+
 ## RTL-SDR native dependency
 
 The Rust server links directly to `librtlsdr` for RTL-SDR device discovery and

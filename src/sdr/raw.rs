@@ -39,6 +39,13 @@ unsafe extern "C" {
     ) -> c_int;
     pub fn rtlsdr_open(dev: *mut *mut rtlsdr_dev_t, index: c_uint) -> c_int;
     pub fn rtlsdr_close(dev: *mut rtlsdr_dev_t) -> c_int;
+    pub fn rtlsdr_set_center_freq(dev: *mut rtlsdr_dev_t, freq: c_uint) -> c_int;
+    pub fn rtlsdr_get_center_freq(dev: *mut rtlsdr_dev_t) -> c_uint;
+    pub fn rtlsdr_set_sample_rate(dev: *mut rtlsdr_dev_t, rate: c_uint) -> c_int;
+    pub fn rtlsdr_get_sample_rate(dev: *mut rtlsdr_dev_t) -> c_uint;
+    pub fn rtlsdr_set_tuner_gain_mode(dev: *mut rtlsdr_dev_t, mode: c_int) -> c_int;
+    pub fn rtlsdr_set_tuner_gain(dev: *mut rtlsdr_dev_t, gain: c_int) -> c_int;
+    pub fn rtlsdr_get_tuner_gain(dev: *mut rtlsdr_dev_t) -> c_int;
 }
 
 pub(crate) fn device_name(index: u32) -> String {
@@ -69,6 +76,48 @@ pub(crate) fn close_device(handle: &mut DeviceHandle) -> i32 {
     // SAFETY: `DeviceHandle` can only be constructed by `open_device`, which
     // guarantees a non-null handle returned by a successful librtlsdr open.
     unsafe { rtlsdr_close(handle.raw.as_ptr()) as i32 }
+}
+
+pub(crate) fn set_center_freq(handle: &mut DeviceHandle, frequency_hz: u32) -> i32 {
+    // SAFETY: `DeviceHandle` can only be constructed by `open_device`, which
+    // guarantees a valid librtlsdr handle for the duration of this call.
+    unsafe { rtlsdr_set_center_freq(handle.raw.as_ptr(), frequency_hz) as i32 }
+}
+
+pub(crate) fn get_center_freq(handle: &DeviceHandle) -> u32 {
+    // SAFETY: `DeviceHandle` can only be constructed by `open_device`, which
+    // guarantees a valid librtlsdr handle for the duration of this call.
+    unsafe { rtlsdr_get_center_freq(handle.raw.as_ptr()) as u32 }
+}
+
+pub(crate) fn set_sample_rate(handle: &mut DeviceHandle, sample_rate_hz: u32) -> i32 {
+    // SAFETY: `DeviceHandle` can only be constructed by `open_device`, which
+    // guarantees a valid librtlsdr handle for the duration of this call.
+    unsafe { rtlsdr_set_sample_rate(handle.raw.as_ptr(), sample_rate_hz) as i32 }
+}
+
+pub(crate) fn get_sample_rate(handle: &DeviceHandle) -> u32 {
+    // SAFETY: `DeviceHandle` can only be constructed by `open_device`, which
+    // guarantees a valid librtlsdr handle for the duration of this call.
+    unsafe { rtlsdr_get_sample_rate(handle.raw.as_ptr()) as u32 }
+}
+
+pub(crate) fn set_tuner_gain_mode(handle: &mut DeviceHandle, mode: i32) -> i32 {
+    // SAFETY: `DeviceHandle` can only be constructed by `open_device`, which
+    // guarantees a valid librtlsdr handle for the duration of this call.
+    unsafe { rtlsdr_set_tuner_gain_mode(handle.raw.as_ptr(), mode as c_int) as i32 }
+}
+
+pub(crate) fn set_tuner_gain(handle: &mut DeviceHandle, gain_tenths_db: i32) -> i32 {
+    // SAFETY: `DeviceHandle` can only be constructed by `open_device`, which
+    // guarantees a valid librtlsdr handle for the duration of this call.
+    unsafe { rtlsdr_set_tuner_gain(handle.raw.as_ptr(), gain_tenths_db as c_int) as i32 }
+}
+
+pub(crate) fn get_tuner_gain(handle: &DeviceHandle) -> i32 {
+    // SAFETY: `DeviceHandle` can only be constructed by `open_device`, which
+    // guarantees a valid librtlsdr handle for the duration of this call.
+    unsafe { rtlsdr_get_tuner_gain(handle.raw.as_ptr()) as i32 }
 }
 
 unsafe fn string_from_ptr(value: *const c_char) -> String {

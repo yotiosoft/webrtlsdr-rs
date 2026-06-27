@@ -26,6 +26,12 @@ pub fn router() -> Router {
             "/api/session/disconnect",
             axum::routing::post(session::disconnect),
         )
+        .route("/api/session/tune", axum::routing::post(session::tune))
+        .route(
+            "/api/session/sample-rate",
+            axum::routing::post(session::sample_rate),
+        )
+        .route("/api/session/gain", axum::routing::post(session::gain))
         .with_state(ApiState::default())
 }
 
@@ -44,6 +50,13 @@ pub struct ApiError {
 }
 
 impl ApiError {
+    pub fn bad_request(message: &'static str) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            message,
+        }
+    }
+
     pub fn conflict(message: &'static str) -> Self {
         Self {
             status: StatusCode::CONFLICT,

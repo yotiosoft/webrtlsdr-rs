@@ -15,9 +15,22 @@ pub struct SdrDeviceInfo {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SdrError {
-    UsbStringsUnavailable { index: u32, code: i32 },
-    OpenFailed { index: u32, code: i32 },
-    NullDeviceHandle { index: u32 },
+    UsbStringsUnavailable {
+        index: u32,
+        code: i32,
+    },
+    OpenFailed {
+        index: u32,
+        code: i32,
+    },
+    NullDeviceHandle {
+        index: u32,
+    },
+    SettingFailed {
+        index: u32,
+        setting: &'static str,
+        code: i32,
+    },
 }
 
 impl fmt::Display for SdrError {
@@ -41,6 +54,16 @@ impl fmt::Display for SdrError {
                     "failed to open RTL-SDR device {index}: librtlsdr returned a null handle"
                 )
             }
+            Self::SettingFailed {
+                index,
+                setting,
+                code,
+            } => {
+                write!(
+                    formatter,
+                    "failed to set RTL-SDR {setting} for device {index}: librtlsdr returned {code}"
+                )
+            }
         }
     }
 }
@@ -61,6 +84,53 @@ unsafe impl Send for OpenedDevice {}
 impl OpenedDevice {
     pub fn info(&self) -> &SdrDeviceInfo {
         &self.info
+    }
+
+    pub fn set_center_frequency_hz(&mut self, frequency_hz: u32) -> Result<(), SdrError> {
+        let code = raw::set_center_freq(&mut self.raw, frequency_hz);
+        self.check_setting_result("center frequency", code)
+    }
+
+    pub fn center_frequency_hz(&self) -> u32 {
+        raw::get_center_freq(&self.raw)
+    }
+
+    pub fn set_sample_rate_hz(&mut self, sample_rate_hz: u32) -> Result<(), SdrError> {
+        let code = raw::set_sample_rate(&mut self.raw, sample_rate_hz);
+        self.check_setting_result("sample rate", code)
+    }
+
+    pub fn sample_rate_hz(&self) -> u32 {
+        raw::get_sample_rate(&self.raw)
+    }
+
+    pub fn set_auto_gain(&mut self) -> Result<(), SdrError> {
+        let code = raw::set_tuner_gain_mode(&mut self.raw, 0);
+        self.check_setting_result("tuner gain mode", code)
+    }
+
+    pub fn set_manual_gain_tenths_db(&mut self, gain_tenths_db: i32) -> Result<(), SdrError> {
+        let mode_code = raw::set_tuner_gain_mode(&mut self.raw, 1);
+        self.check_setting_result("tuner gain mode", mode_code)?;
+
+        let gain_code = raw::set_tuner_gain(&mut self.raw, gain_tenths_db);
+        self.check_setting_result("tuner gain", gain_code)
+    }
+
+    pub fn tuner_gain_tenths_db(&self) -> i32 {
+        raw::get_tuner_gain(&self.raw)
+    }
+
+    fn check_setting_result(&self, setting: &'static str, code: i32) -> Result<(), SdrError> {
+        if code < 0 {
+            return Err(SdrError::SettingFailed {
+                index: self.info.index,
+                setting,
+                code,
+            });
+        }
+
+        Ok(())
     }
 }
 
