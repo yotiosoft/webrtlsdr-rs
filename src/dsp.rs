@@ -70,7 +70,7 @@ pub struct DspProcessor {
     audio_sample_rate_hz: u32,
     dc_level: f32,
     low_pass_level: f32,
-    decimation_phase: usize,
+    output_phase: u32,
     stats: DspStats,
 }
 
@@ -78,11 +78,7 @@ impl DspProcessor {
     pub fn new(config: DspConfig) -> Self {
         let decimation_ratio =
             decimation_ratio(config.input_sample_rate_hz, config.output_sample_rate_hz);
-        let audio_sample_rate_hz = if decimation_ratio == 0 {
-            config.input_sample_rate_hz
-        } else {
-            config.input_sample_rate_hz / decimation_ratio as u32
-        };
+        let audio_sample_rate_hz = config.output_sample_rate_hz;
 
         let stats = DspStats {
             audio_sample_rate_hz,
@@ -96,7 +92,7 @@ impl DspProcessor {
             audio_sample_rate_hz,
             dc_level: 0.0,
             low_pass_level: 0.0,
-            decimation_phase: 0,
+            output_phase: 0,
             stats,
         }
     }
@@ -125,14 +121,16 @@ impl DspProcessor {
             let low_pass_alpha = self.low_pass_alpha();
             self.low_pass_level += low_pass_alpha * (demodulated - self.low_pass_level);
 
-            if self.decimation_phase == 0 {
+            self.output_phase = self
+                .output_phase
+                .saturating_add(self.config.output_sample_rate_hz);
+            if self.output_phase >= self.config.input_sample_rate_hz {
+                self.output_phase -= self.config.input_sample_rate_hz;
                 let audio = (self.low_pass_level * AUDIO_GAIN).clamp(-1.0, 1.0);
                 if audio.is_finite() {
                     samples.push(audio);
                 }
             }
-
-            self.decimation_phase = (self.decimation_phase + 1) % self.decimation_ratio.max(1);
         }
 
         self.record_success(iq_len, &samples);
@@ -244,5 +242,21 @@ mod tests {
         assert!(stats.last_processed_unix_ms.is_some());
         assert!(stats.audio_peak >= 0.0);
         assert!(stats.audio_rms >= 0.0);
+    }
+
+    #[test]
+    fn fractional_output_clock_tracks_configured_audio_rate() {
+        let mut dsp = DspProcessor::new(DspConfig {
+            input_sample_rate_hz: 1000,
+            output_sample_rate_hz: 300,
+            mode: DemodulationMode::Am,
+        });
+        let iq = vec![128_u8; 2000];
+
+        let audio = dsp.process_iq_u8(&iq);
+
+        assert_eq!(audio.sample_rate_hz, 300);
+        assert_eq!(audio.samples.len(), 300);
+        assert_eq!(dsp.stats().audio_samples_produced, 300);
     }
 }

@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 use axum::{
     Json, Router,
     extract::{State, ws::WebSocketUpgrade},
-    http::StatusCode,
-    response::IntoResponse,
+    http::{StatusCode, header},
+    response::{Html, IntoResponse},
     routing::get,
 };
 use serde::Serialize;
@@ -31,6 +31,9 @@ impl Default for ApiState {
 
 pub fn router() -> Router {
     Router::new()
+        .route("/", get(index))
+        .route("/app.js", get(app_js))
+        .route("/audio-worklet.js", get(audio_worklet_js))
         .route("/health", get(health))
         .route("/ws/audio", get(audio_websocket))
         .route("/api/devices", get(devices::list))
@@ -53,6 +56,30 @@ pub fn router() -> Router {
         )
         .route("/api/session/gain", axum::routing::post(session::gain))
         .with_state(ApiState::default())
+}
+
+async fn index() -> Html<&'static str> {
+    Html(include_str!("../public/index.html"))
+}
+
+async fn app_js() -> impl IntoResponse {
+    (
+        [(
+            header::CONTENT_TYPE,
+            "application/javascript; charset=utf-8",
+        )],
+        include_str!("../public/app.js"),
+    )
+}
+
+async fn audio_worklet_js() -> impl IntoResponse {
+    (
+        [(
+            header::CONTENT_TYPE,
+            "application/javascript; charset=utf-8",
+        )],
+        include_str!("../public/audio-worklet.js"),
+    )
 }
 
 async fn health() -> Json<HealthResponse> {

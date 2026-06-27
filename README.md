@@ -165,6 +165,44 @@ with no JSON wrapper. The `stream` section of `/api/session/stats` reports
 active WebSocket clients, frames and bytes broadcast, dropped frames from lagging
 clients, the last connect/disconnect timestamps, and the last stream error.
 
+## Browser Playback
+
+The server serves a minimal browser UI at:
+
+```sh
+http://127.0.0.1:3000/
+```
+
+To try live audio from a browser, run `cargo run`, open the URL, reload devices,
+select an RTL-SDR, connect, tune a frequency such as `100000000`, apply the
+sample rate and gain settings, start receiving, then press Start Audio. The page
+connects to `/ws/audio`, reads the initial PCM metadata message, converts binary
+signed 16-bit little-endian mono PCM frames to `Float32Array` samples, and plays
+them through an AudioWorklet. The audio panel shows WebSocket state, received
+frames and bytes, buffered samples, underruns, and dropped samples.
+
+AudioWorklet requires a secure browser context. For development from another
+host, use an SSH tunnel and open the app as localhost:
+
+```sh
+ssh -L 3000:127.0.0.1:3000 user@server
+```
+
+Then open `http://127.0.0.1:3000/` in the local browser. Direct access to
+`http://server-ip:3000/` is not enough for AudioWorklet unless the app is served
+over HTTPS.
+
+When serving under an Apache subpath such as `https://example.com/rtl-sdr/`,
+proxy the whole path to this server and keep the trailing slash:
+
+```apache
+RedirectMatch 301 ^/rtl-sdr$ /rtl-sdr/
+ProxyPass /rtl-sdr/ws/audio ws://127.0.0.1:3000/ws/audio
+ProxyPassReverse /rtl-sdr/ws/audio ws://127.0.0.1:3000/ws/audio
+ProxyPass /rtl-sdr/ http://127.0.0.1:3000/
+ProxyPassReverse /rtl-sdr/ http://127.0.0.1:3000/
+```
+
 Stop reception. This is safe to call even when reception is not running:
 
 ```sh

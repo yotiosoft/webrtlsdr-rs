@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WebRTLSDR</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f7f5ef;
+        --panel: #ffffff;
+        --text: #172026;
+        --muted: #66717a;
+        --line: #d9ded8;
+        --accent: #0f766e;
+        --accent-strong: #115e59;
+        --warn: #a16207;
+        --bad: #b42318;
+        --good: #15803d;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--text);
+        font: 15px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      main {
+        width: min(1120px, calc(100% - 32px));
+        margin: 0 auto;
+        padding: 28px 0 36px;
+      }
+
+      header {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 20px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(28px, 5vw, 44px);
+        font-weight: 750;
+        letter-spacing: 0;
+      }
+
+      h2 {
+        margin: 0 0 14px;
+        font-size: 18px;
+        letter-spacing: 0;
+      }
+
+      button,
+      input,
+      select {
+        min-height: 38px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        font: inherit;
+      }
+
+      button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 0 14px;
+        background: #f8faf9;
+        color: var(--text);
+        cursor: pointer;
+      }
+
+      button.primary {
+        border-color: var(--accent);
+        background: var(--accent);
+        color: white;
+      }
+
+      button:hover:not(:disabled) {
+        border-color: var(--accent-strong);
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
+      }
+
+      input,
+      select {
+        width: 100%;
+        padding: 0 10px;
+        background: var(--panel);
+        color: var(--text);
+      }
+
+      label {
+        display: grid;
+        gap: 6px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+        gap: 18px;
+      }
+
+      .panel {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        padding: 18px;
+      }
+
+      .stack {
+        display: grid;
+        gap: 14px;
+      }
+
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .fields {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .metric {
+        min-height: 62px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 10px;
+        background: #fbfcfb;
+      }
+
+      .metric span {
+        display: block;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .metric strong {
+        display: block;
+        overflow-wrap: anywhere;
+        margin-top: 4px;
+        font-size: 15px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        min-height: 30px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 0 10px;
+        background: var(--panel);
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .pill.good {
+        border-color: #86efac;
+        color: var(--good);
+      }
+
+      .pill.bad {
+        border-color: #fecaca;
+        color: var(--bad);
+      }
+
+      .error {
+        min-height: 22px;
+        color: var(--bad);
+      }
+
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+
+      @media (max-width: 820px) {
+        main {
+          width: min(100% - 20px, 1120px);
+          padding-top: 16px;
+        }
+
+        header,
+        .grid {
+          display: grid;
+          grid-template-columns: 1fr;
+        }
+
+        .fields,
+        .metrics {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>WebRTLSDR</h1>
+          <div class="row" aria-live="polite">
+            <span id="connectedState" class="pill">Device disconnected</span>
+            <span id="receivingState" class="pill">Receiving stopped</span>
+            <span id="audioState" class="pill">Audio stopped</span>
+          </div>
+        </div>
+        <button id="reloadDevicesButton" type="button">Reload Devices</button>
+      </header>
+
+      <div class="grid">
+        <section class="panel stack">
+          <h2>Receiver</h2>
+          <label>
+            Device
+            <select id="deviceSelect"></select>
+          </label>
+          <div class="row">
+            <button id="connectButton" class="primary" type="button">Connect</button>
+            <button id="disconnectButton" type="button">Disconnect</button>
+          </div>
+
+          <div class="fields">
+            <label>
+              Frequency Hz
+              <input id="frequencyInput" inputmode="numeric" type="number" min="1" step="1" value="100000000" />
+            </label>
+            <label>
+              Sample Rate Hz
+              <input id="sampleRateInput" inputmode="numeric" type="number" min="1" step="1" value="2048000" />
+            </label>
+            <label>
+              Gain Mode
+              <select id="gainModeSelect">
+                <option value="auto">Auto</option>
+                <option value="manual">Manual</option>
+              </select>
+            </label>
+            <label>
+              Manual Gain 0.1 dB
+              <input id="gainInput" inputmode="numeric" type="number" step="1" value="280" />
+            </label>
+          </div>
+
+          <div class="row">
+            <button id="applySettingsButton" type="button">Apply Settings</button>
+            <button id="startButton" class="primary" type="button">Start Receiving</button>
+            <button id="stopButton" type="button">Stop Receiving</button>
+          </div>
+          <div id="message" class="error" role="status" aria-live="polite"></div>
+        </section>
+
+        <section class="panel stack">
+          <h2>Audio</h2>
+          <div class="row">
+            <button id="startAudioButton" class="primary" type="button">Start Audio</button>
+            <button id="stopAudioButton" type="button">Stop Audio</button>
+          </div>
+          <div class="metrics">
+            <div class="metric"><span>WebSocket</span><strong id="wsMetric">disconnected</strong></div>
+            <div class="metric"><span>Frames</span><strong id="framesMetric">0</strong></div>
+            <div class="metric"><span>Bytes</span><strong id="bytesMetric">0</strong></div>
+            <div class="metric"><span>Buffered Samples</span><strong id="bufferMetric">0</strong></div>
+            <div class="metric"><span>Underruns</span><strong id="underrunMetric">0</strong></div>
+            <div class="metric"><span>Dropped Samples</span><strong id="droppedMetric">0</strong></div>
+          </div>
+          <div class="metrics">
+            <div class="metric"><span>AudioContext</span><strong id="contextMetric">closed</strong></div>
+            <div class="metric"><span>Format</span><strong id="formatMetric" class="mono">unknown</strong></div>
+            <div class="metric"><span>Server Stream Clients</span><strong id="clientsMetric">0</strong></div>
+          </div>
+        </section>
+      </div>
+    </main>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
