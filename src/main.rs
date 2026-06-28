@@ -6,6 +6,7 @@ mod dsp;
 mod sdr;
 mod session;
 mod stream;
+mod webrtc;
 
 use anyhow::Context;
 use config::Config;
@@ -28,7 +29,7 @@ async fn main() -> anyhow::Result<()> {
 
     info!(listen_addr = %config.listen_addr(), "starting WebRTLSDR server");
 
-    axum::serve(listener, api::router())
+    axum::serve(listener, api::router(config.webrtc()))
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("server failed")?;

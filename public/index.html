@@ -226,6 +226,7 @@
             <span id="connectedState" class="pill">Device disconnected</span>
             <span id="receivingState" class="pill">Receiving stopped</span>
             <span id="audioState" class="pill">Audio stopped</span>
+            <span id="webrtcState" class="pill">WebRTC closed</span>
           </div>
         </div>
         <button id="reloadDevicesButton" type="button">Reload Devices</button>
@@ -271,6 +272,28 @@
             <button id="stopButton" type="button">Stop Receiving</button>
           </div>
           <div id="message" class="error" role="status" aria-live="polite"></div>
+        </section>
+
+        <section class="panel stack">
+          <h2>WebRTC PoC</h2>
+          <div class="row">
+            <button id="createWebRtcButton" class="primary" type="button">Create WebRTC Session</button>
+            <button id="closeWebRtcButton" type="button">Close WebRTC Session</button>
+          </div>
+          <div class="metrics">
+            <div class="metric"><span>Session</span><strong id="webrtcSessionMetric" class="mono">-</strong></div>
+            <div class="metric"><span>Signaling</span><strong id="webrtcSignalingMetric">closed</strong></div>
+            <div class="metric"><span>ICE Gathering</span><strong id="webrtcIceGatheringMetric">new</strong></div>
+            <div class="metric"><span>ICE Connection</span><strong id="webrtcIceConnectionMetric">new</strong></div>
+            <div class="metric"><span>Peer Connection</span><strong id="webrtcPeerConnectionMetric">closed</strong></div>
+            <div class="metric"><span>Data Channel</span><strong id="webrtcDataChannelMetric">closed</strong></div>
+            <div class="metric"><span>Selected Candidate Pair</span><strong id="webrtcCandidatePairMetric" class="mono">-</strong></div>
+            <div class="metric"><span>Transport</span><strong id="webrtcTransportMetric" class="mono">-</strong></div>
+            <div class="metric"><span>Bytes Sent / Received</span><strong id="webrtcBytesMetric">0 / 0</strong></div>
+            <div class="metric"><span>Round Trip Time</span><strong id="webrtcRttMetric">-</strong></div>
+            <div class="metric"><span>Configured ICE Servers</span><strong id="webrtcIceServersMetric" class="mono">-</strong></div>
+            <div class="metric"><span>Last Error</span><strong id="webrtcErrorMetric">-</strong></div>
+          </div>
         </section>
 
         <section class="panel stack">

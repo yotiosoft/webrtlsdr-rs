@@ -218,6 +218,44 @@ AudioWorklet buffer behavior. This PCM-over-WebSocket path remains a diagnostic,
 comparison, and fallback transport; the planned stable browser audio transport is
 WebRTC with Opus in a later step.
 
+The WebRTC + Opus migration design is documented in
+[docs/webrtc-opus-plan.md](docs/webrtc-opus-plan.md). It keeps the PCM
+WebSocket paths for diagnostics while moving the default browser playback plan
+toward WebRTC signaling and Opus audio.
+
+Step 14 adds a WebRTC signaling PoC. The server exposes:
+
+```sh
+curl http://127.0.0.1:3000/api/webrtc/config
+```
+
+and accepts browser SDP offers at:
+
+```sh
+POST /api/webrtc/offer
+```
+
+The browser UI includes a WebRTC PoC panel with Create WebRTC Session and Close
+WebRTC Session controls. It creates an `RTCPeerConnection`, opens a small
+diagnostics data channel, waits for browser ICE gathering to complete, posts the
+complete SDP offer, applies the Rust-generated SDP answer, and shows signaling,
+ICE, peer connection, candidate pair, transport, and byte counters from browser
+`getStats()`. No SDR audio, Opus encoding, or RTP audio track is sent in Step 14.
+
+LAN use is the default assumption. Configure optional STUN/TURN URLs with a
+comma-separated environment variable when needed:
+
+```sh
+WEBRTLSDR_WEBRTC_ICE_SERVERS=stun:stun.l.google.com:19302 cargo run
+```
+
+When served through Apache under `/rtl-sdr/`, HTTP signaling uses the same
+base-path-aware frontend URL helper as the PCM WebSocket UI. WebRTC media and
+data transport do not flow through the HTTP reverse proxy; ICE candidates must
+advertise addresses reachable from the browser. For access across NATs,
+firewalls, or the public Internet, plan on TURN rather than only STUN. Step 15 is
+expected to add a silent or Opus audio track before real SDR audio is attached.
+
 The `stream` section of `/api/session/stats` reports active WebSocket clients,
 frames, bytes, samples, last sequence, last PTS, dropped frames, lagged
 subscriber events, the last connect/disconnect timestamps, and the last stream

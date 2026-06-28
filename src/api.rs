@@ -1,4 +1,5 @@
 mod devices;
+mod rtc;
 mod session;
 
 use std::sync::{Arc, Mutex};
@@ -12,24 +13,30 @@ use axum::{
 };
 use serde::Serialize;
 
-use crate::{session::SessionState, stream::AudioStreamHub};
+use crate::{
+    session::SessionState,
+    stream::AudioStreamHub,
+    webrtc::{WebRtcConfig, WebRtcSessionManager},
+};
 
 #[derive(Clone)]
 pub struct ApiState {
     pub(crate) session: Arc<Mutex<SessionState>>,
     pub(crate) audio_stream: AudioStreamHub,
+    pub(crate) webrtc: Arc<WebRtcSessionManager>,
 }
 
-impl Default for ApiState {
-    fn default() -> Self {
+impl ApiState {
+    fn new(webrtc_config: WebRtcConfig) -> Self {
         Self {
             session: Arc::new(Mutex::new(SessionState::default())),
             audio_stream: AudioStreamHub::default(),
+            webrtc: Arc::new(WebRtcSessionManager::new(webrtc_config)),
         }
     }
 }
 
-pub fn router() -> Router {
+pub fn router(webrtc_config: WebRtcConfig) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/app.js", get(app_js))
@@ -38,6 +45,12 @@ pub fn router() -> Router {
         .route("/ws/audio", get(audio_websocket))
         .route("/ws/audio-v1", get(audio_v1_websocket))
         .route("/api/devices", get(devices::list))
+        .route("/api/webrtc/config", get(rtc::config))
+        .route("/api/webrtc/offer", axum::routing::post(rtc::offer))
+        .route(
+            "/api/webrtc/sessions/:session_id",
+            axum::routing::delete(rtc::close),
+        )
         .route("/api/session", get(session::get))
         .route(
             "/api/session/connect",
@@ -56,7 +69,7 @@ pub fn router() -> Router {
             axum::routing::post(session::sample_rate),
         )
         .route("/api/session/gain", axum::routing::post(session::gain))
-        .with_state(ApiState::default())
+        .with_state(ApiState::new(webrtc_config))
 }
 
 async fn index() -> Html<&'static str> {
