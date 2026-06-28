@@ -235,12 +235,23 @@ and accepts browser SDP offers at:
 POST /api/webrtc/offer
 ```
 
-The browser UI includes a WebRTC PoC panel with Create WebRTC Session and Close
-WebRTC Session controls. It creates an `RTCPeerConnection`, opens a small
-diagnostics data channel, waits for browser ICE gathering to complete, posts the
-complete SDP offer, applies the Rust-generated SDP answer, and shows signaling,
-ICE, peer connection, candidate pair, transport, and byte counters from browser
-`getStats()`. No SDR audio, Opus encoding, or RTP audio track is sent in Step 14.
+The browser UI includes a WebRTC PoC panel with Start WebRTC Audio, Play WebRTC
+Audio, and Stop WebRTC Audio controls. It creates an `RTCPeerConnection`, adds a
+recvonly audio transceiver, opens a small diagnostics data channel, waits for
+browser ICE gathering to complete, posts the complete SDP offer, applies the
+Rust-generated SDP answer, and attaches the remote audio track to an `<audio>`
+element. Step 15 sends a paced 20 ms silent Opus audio packet on a server-side
+`TrackLocalStaticSample`; SDR audio and a real Opus encoder remain planned for
+Step 16.
+
+The panel shows signaling, ICE, peer connection, candidate pair, transport, byte
+counters, inbound audio RTP packets/bytes/loss/jitter/concealment/audio level
+from browser `getStats()`, audio element ready/playback state, and server-side
+WebRTC session/audio counters from:
+
+```sh
+curl http://127.0.0.1:3000/api/webrtc/stats
+```
 
 LAN use is the default assumption. Configure optional STUN/TURN URLs with a
 comma-separated environment variable when needed:
@@ -253,8 +264,16 @@ When served through Apache under `/rtl-sdr/`, HTTP signaling uses the same
 base-path-aware frontend URL helper as the PCM WebSocket UI. WebRTC media and
 data transport do not flow through the HTTP reverse proxy; ICE candidates must
 advertise addresses reachable from the browser. For access across NATs,
-firewalls, or the public Internet, plan on TURN rather than only STUN. Step 15 is
-expected to add a silent or Opus audio track before real SDR audio is attached.
+firewalls, or the public Internet, plan on TURN rather than only STUN. Under
+`/rtl-sdr/`, the frontend still resolves signaling and stats URLs relative to
+the served base path.
+
+To verify Step 15, run `cargo run`, open the browser UI, click Start WebRTC
+Audio, and confirm Remote Track becomes `audio:live`, the audio element has a
+remote stream, Playback is `playing` or Play WebRTC Audio reports any autoplay
+rejection, and Inbound Packets / Bytes increases. Stop WebRTC Audio should close
+the peer connection and stop the server audio send task; starting again should
+create a fresh session.
 
 The `stream` section of `/api/session/stats` reports active WebSocket clients,
 frames, bytes, samples, last sequence, last PTS, dropped frames, lagged

@@ -1,21 +1,36 @@
-use std::{collections::HashMap, sync::Arc, time::SystemTime};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, SystemTime},
+};
 
 use anyhow::{Context, anyhow, bail};
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, task::JoinHandle};
 use webrtc::{
     api::{
-        APIBuilder, interceptor_registry::register_default_interceptors, media_engine::MediaEngine,
+        APIBuilder,
+        interceptor_registry::register_default_interceptors,
+        media_engine::{MIME_TYPE_OPUS, MediaEngine},
     },
     data_channel::RTCDataChannel,
     ice_transport::ice_server::RTCIceServer,
     interceptor::registry::Registry,
+    media::Sample,
     peer_connection::{
         RTCPeerConnection, configuration::RTCConfiguration,
         peer_connection_state::RTCPeerConnectionState,
         sdp::session_description::RTCSessionDescription,
     },
+    rtp_transceiver::{rtp_codec::RTCRtpCodecCapability, rtp_sender::RTCRtpSender},
+    track::track_local::{TrackLocal, track_local_static_sample::TrackLocalStaticSample},
 };
+
+const SILENT_AUDIO_FRAME_DURATION: Duration = Duration::from_millis(20);
+const OPUS_SILENCE_PACKET: &[u8] = &[0xf8, 0xff, 0xfe];
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WebRtcConfig {
@@ -49,17 +64,43 @@ pub struct WebRtcConfigResponse {
     pub ice_servers: Vec<String>,
 }
 
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct WebRtcStatsResponse {
+    pub active_sessions: usize,
+    pub audio_frames_sent: u64,
+    pub audio_bytes_sent: u64,
+    pub last_audio_send_error: Option<String>,
+    pub peer_connections: Vec<WebRtcPeerConnectionStats>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct WebRtcPeerConnectionStats {
+    pub session_id: String,
+    pub peer_connection_state: String,
+    pub created_at_unix_ms: Option<u128>,
+}
+
 #[derive(Default)]
 pub struct WebRtcSessionManager {
     config: WebRtcConfig,
     next_session: Mutex<u64>,
     sessions: Mutex<HashMap<String, WebRtcSession>>,
+    audio_stats: Arc<WebRtcAudioStats>,
 }
 
 struct WebRtcSession {
     peer_connection: Arc<RTCPeerConnection>,
+    audio_send_task: JoinHandle<()>,
+    rtcp_read_task: JoinHandle<()>,
     created_at: SystemTime,
     connection_state: RTCPeerConnectionState,
+}
+
+#[derive(Default)]
+struct WebRtcAudioStats {
+    frames_sent: AtomicU64,
+    bytes_sent: AtomicU64,
+    last_send_error: Mutex<Option<String>>,
 }
 
 impl WebRtcSessionManager {
@@ -68,12 +109,38 @@ impl WebRtcSessionManager {
             config,
             next_session: Mutex::new(1),
             sessions: Mutex::new(HashMap::new()),
+            audio_stats: Arc::new(WebRtcAudioStats::default()),
         }
     }
 
     pub fn config_response(&self) -> WebRtcConfigResponse {
         WebRtcConfigResponse {
             ice_servers: self.config.ice_servers.clone(),
+        }
+    }
+
+    pub async fn stats_response(&self) -> WebRtcStatsResponse {
+        let sessions = self.sessions.lock().await;
+        WebRtcStatsResponse {
+            active_sessions: sessions.len(),
+            audio_frames_sent: self.audio_stats.frames_sent.load(Ordering::Relaxed),
+            audio_bytes_sent: self.audio_stats.bytes_sent.load(Ordering::Relaxed),
+            last_audio_send_error: self.audio_stats.last_send_error.lock().await.clone(),
+            peer_connections: sessions
+                .iter()
+                .map(|(session_id, session)| WebRtcPeerConnectionStats {
+                    session_id: session_id.clone(),
+                    peer_connection_state: format!(
+                        "{:?}",
+                        session.peer_connection.connection_state()
+                    ),
+                    created_at_unix_ms: session
+                        .created_at
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .ok()
+                        .map(|duration| duration.as_millis()),
+                })
+                .collect(),
         }
     }
 
@@ -87,6 +154,7 @@ impl WebRtcSessionManager {
 
         let session_id = self.allocate_session_id().await;
         let peer_connection = self.new_peer_connection().await?;
+        let (audio_track, audio_sender) = self.add_silent_audio_track(&peer_connection).await?;
         let state_session_id = session_id.clone();
         let state_peer_connection = Arc::clone(&peer_connection);
 
@@ -134,10 +202,19 @@ impl WebRtcSessionManager {
             .await
             .ok_or_else(|| anyhow!("WebRTC local answer was not set"))?;
 
+        let audio_send_task = spawn_silent_audio_sender(
+            session_id.clone(),
+            Arc::clone(&audio_track),
+            Arc::clone(&self.audio_stats),
+        );
+        let rtcp_read_task = spawn_rtcp_reader(session_id.clone(), audio_sender);
+
         self.sessions.lock().await.insert(
             session_id.clone(),
             WebRtcSession {
                 peer_connection,
+                audio_send_task,
+                rtcp_read_task,
                 created_at: SystemTime::now(),
                 connection_state: RTCPeerConnectionState::New,
             },
@@ -154,6 +231,8 @@ impl WebRtcSessionManager {
         let session = self.sessions.lock().await.remove(session_id);
         if let Some(session) = session {
             tracing::info!(%session_id, created_at = ?session.created_at, state = ?session.connection_state, "closing WebRTC session");
+            session.audio_send_task.abort();
+            session.rtcp_read_task.abort();
             session
                 .peer_connection
                 .close()
@@ -206,6 +285,77 @@ impl WebRtcSessionManager {
             .map(Arc::new)
             .context("failed to create WebRTC peer connection")
     }
+
+    async fn add_silent_audio_track(
+        &self,
+        peer_connection: &Arc<RTCPeerConnection>,
+    ) -> anyhow::Result<(Arc<TrackLocalStaticSample>, Arc<RTCRtpSender>)> {
+        let track = Arc::new(TrackLocalStaticSample::new(
+            RTCRtpCodecCapability {
+                mime_type: MIME_TYPE_OPUS.to_string(),
+                clock_rate: 48_000,
+                channels: 2,
+                sdp_fmtp_line: "minptime=10;useinbandfec=1".to_string(),
+                rtcp_feedback: vec![],
+            },
+            "silent-audio".to_string(),
+            "webrtlsdr".to_string(),
+        ));
+
+        let sender = peer_connection
+            .add_track(Arc::clone(&track) as Arc<dyn TrackLocal + Send + Sync>)
+            .await
+            .context("failed to add WebRTC silent audio track")?;
+        Ok((track, sender))
+    }
+}
+
+fn spawn_rtcp_reader(session_id: String, sender: Arc<RTCRtpSender>) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            match sender.read_rtcp().await {
+                Ok((_packets, _attributes)) => {}
+                Err(error) => {
+                    tracing::debug!(%session_id, %error, "WebRTC RTCP reader stopped");
+                    return;
+                }
+            }
+        }
+    })
+}
+
+fn spawn_silent_audio_sender(
+    session_id: String,
+    audio_track: Arc<TrackLocalStaticSample>,
+    audio_stats: Arc<WebRtcAudioStats>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(SILENT_AUDIO_FRAME_DURATION);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        loop {
+            ticker.tick().await;
+            let sample = Sample {
+                data: OPUS_SILENCE_PACKET.to_vec().into(),
+                duration: SILENT_AUDIO_FRAME_DURATION,
+                ..Default::default()
+            };
+
+            match audio_track.write_sample(&sample).await {
+                Ok(()) => {
+                    audio_stats.frames_sent.fetch_add(1, Ordering::Relaxed);
+                    audio_stats
+                        .bytes_sent
+                        .fetch_add(OPUS_SILENCE_PACKET.len() as u64, Ordering::Relaxed);
+                }
+                Err(error) => {
+                    let error = error.to_string();
+                    tracing::warn!(%session_id, %error, "failed to send WebRTC silent audio frame");
+                    *audio_stats.last_send_error.lock().await = Some(error);
+                }
+            }
+        }
+    })
 }
 
 #[cfg(test)]
@@ -238,5 +388,11 @@ mod tests {
         let manager = WebRtcSessionManager::new(WebRtcConfig::default());
         assert!(!manager.close("missing").await.unwrap());
         assert_eq!(manager.len().await, 0);
+    }
+
+    #[test]
+    fn silent_audio_frame_uses_20ms_opus_packet() {
+        assert_eq!(SILENT_AUDIO_FRAME_DURATION, Duration::from_millis(20));
+        assert_eq!(OPUS_SILENCE_PACKET, &[0xf8, 0xff, 0xfe]);
     }
 }

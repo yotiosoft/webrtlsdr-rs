@@ -19,13 +19,26 @@ const elements = {
   webrtcState: document.querySelector("#webrtcState"),
   message: document.querySelector("#message"),
   createWebRtcButton: document.querySelector("#createWebRtcButton"),
+  playWebRtcAudioButton: document.querySelector("#playWebRtcAudioButton"),
   closeWebRtcButton: document.querySelector("#closeWebRtcButton"),
+  webrtcAudioElement: document.querySelector("#webrtcAudioElement"),
   webrtcSessionMetric: document.querySelector("#webrtcSessionMetric"),
   webrtcSignalingMetric: document.querySelector("#webrtcSignalingMetric"),
   webrtcIceGatheringMetric: document.querySelector("#webrtcIceGatheringMetric"),
   webrtcIceConnectionMetric: document.querySelector("#webrtcIceConnectionMetric"),
   webrtcPeerConnectionMetric: document.querySelector("#webrtcPeerConnectionMetric"),
   webrtcDataChannelMetric: document.querySelector("#webrtcDataChannelMetric"),
+  webrtcRemoteTrackMetric: document.querySelector("#webrtcRemoteTrackMetric"),
+  webrtcAudioElementMetric: document.querySelector("#webrtcAudioElementMetric"),
+  webrtcMutedMetric: document.querySelector("#webrtcMutedMetric"),
+  webrtcPlaybackMetric: document.querySelector("#webrtcPlaybackMetric"),
+  webrtcInboundMetric: document.querySelector("#webrtcInboundMetric"),
+  webrtcInboundQualityMetric: document.querySelector("#webrtcInboundQualityMetric"),
+  webrtcConcealmentMetric: document.querySelector("#webrtcConcealmentMetric"),
+  webrtcAudioLevelMetric: document.querySelector("#webrtcAudioLevelMetric"),
+  webrtcServerSessionsMetric: document.querySelector("#webrtcServerSessionsMetric"),
+  webrtcServerAudioMetric: document.querySelector("#webrtcServerAudioMetric"),
+  webrtcServerAudioErrorMetric: document.querySelector("#webrtcServerAudioErrorMetric"),
   webrtcCandidatePairMetric: document.querySelector("#webrtcCandidatePairMetric"),
   webrtcTransportMetric: document.querySelector("#webrtcTransportMetric"),
   webrtcBytesMetric: document.querySelector("#webrtcBytesMetric"),
@@ -73,6 +86,8 @@ const state = {
   webrtc: {
     peerConnection: null,
     dataChannel: null,
+    remoteStream: null,
+    remoteTrackState: "none",
     sessionId: null,
     iceServers: [],
     signalingState: "closed",
@@ -85,6 +100,17 @@ const state = {
     bytesSent: 0,
     bytesReceived: 0,
     roundTripTimeMs: null,
+    inboundPacketsReceived: 0,
+    inboundBytesReceived: 0,
+    inboundPacketsLost: 0,
+    inboundJitterMs: null,
+    concealedSamples: null,
+    concealmentEvents: null,
+    audioLevel: null,
+    serverActiveSessions: 0,
+    serverAudioFramesSent: 0,
+    serverAudioBytesSent: 0,
+    serverAudioError: null,
     lastError: null,
   },
   audio: {
@@ -300,6 +326,7 @@ function renderWebRtc() {
   const tone = connected ? "good" : rtc.connectionState === "failed" ? "bad" : "";
   setPill(elements.webrtcState, connected ? "WebRTC connected" : connecting ? "WebRTC connecting" : "WebRTC closed", tone);
   elements.createWebRtcButton.disabled = state.busy || open;
+  elements.playWebRtcAudioButton.disabled = state.busy || !open || !rtc.remoteStream;
   elements.closeWebRtcButton.disabled = state.busy || !open;
   elements.webrtcSessionMetric.textContent = rtc.sessionId || "-";
   elements.webrtcSignalingMetric.textContent = rtc.signalingState;
@@ -307,6 +334,17 @@ function renderWebRtc() {
   elements.webrtcIceConnectionMetric.textContent = rtc.iceConnectionState;
   elements.webrtcPeerConnectionMetric.textContent = rtc.connectionState;
   elements.webrtcDataChannelMetric.textContent = rtc.dataChannelState;
+  elements.webrtcRemoteTrackMetric.textContent = rtc.remoteTrackState;
+  elements.webrtcAudioElementMetric.textContent = `ready:${elements.webrtcAudioElement.readyState} network:${elements.webrtcAudioElement.networkState}`;
+  elements.webrtcMutedMetric.textContent = `${elements.webrtcAudioElement.muted} / ${elements.webrtcAudioElement.volume.toFixed(2)}`;
+  elements.webrtcPlaybackMetric.textContent = elements.webrtcAudioElement.paused ? "paused" : "playing";
+  elements.webrtcInboundMetric.textContent = `${rtc.inboundPacketsReceived.toLocaleString()} / ${rtc.inboundBytesReceived.toLocaleString()}`;
+  elements.webrtcInboundQualityMetric.textContent = `${rtc.inboundPacketsLost.toLocaleString()} / ${rtc.inboundJitterMs === null ? "-" : `${rtc.inboundJitterMs.toFixed(2)} ms`}`;
+  elements.webrtcConcealmentMetric.textContent = rtc.concealedSamples === null ? "-" : `${rtc.concealedSamples.toLocaleString()} / ${(rtc.concealmentEvents || 0).toLocaleString()}`;
+  elements.webrtcAudioLevelMetric.textContent = rtc.audioLevel === null ? "-" : rtc.audioLevel.toFixed(4);
+  elements.webrtcServerSessionsMetric.textContent = rtc.serverActiveSessions.toLocaleString();
+  elements.webrtcServerAudioMetric.textContent = `${rtc.serverAudioFramesSent.toLocaleString()} / ${rtc.serverAudioBytesSent.toLocaleString()}`;
+  elements.webrtcServerAudioErrorMetric.textContent = rtc.serverAudioError || "-";
   elements.webrtcCandidatePairMetric.textContent = rtc.selectedCandidatePair;
   elements.webrtcTransportMetric.textContent = rtc.transportState;
   elements.webrtcBytesMetric.textContent = `${rtc.bytesSent.toLocaleString()} / ${rtc.bytesReceived.toLocaleString()}`;
@@ -321,11 +359,23 @@ function resetWebRtcStats() {
   state.webrtc.iceConnectionState = "new";
   state.webrtc.connectionState = "closed";
   state.webrtc.dataChannelState = "closed";
+  state.webrtc.remoteTrackState = "none";
   state.webrtc.selectedCandidatePair = "-";
   state.webrtc.transportState = "-";
   state.webrtc.bytesSent = 0;
   state.webrtc.bytesReceived = 0;
   state.webrtc.roundTripTimeMs = null;
+  state.webrtc.inboundPacketsReceived = 0;
+  state.webrtc.inboundBytesReceived = 0;
+  state.webrtc.inboundPacketsLost = 0;
+  state.webrtc.inboundJitterMs = null;
+  state.webrtc.concealedSamples = null;
+  state.webrtc.concealmentEvents = null;
+  state.webrtc.audioLevel = null;
+  state.webrtc.serverActiveSessions = 0;
+  state.webrtc.serverAudioFramesSent = 0;
+  state.webrtc.serverAudioBytesSent = 0;
+  state.webrtc.serverAudioError = null;
   state.webrtc.lastError = null;
 }
 
@@ -359,6 +409,7 @@ async function refreshWebRtcStats() {
     const stats = await peerConnection.getStats();
     let selectedPair = null;
     let transport = null;
+    let inboundAudio = null;
     const reports = new Map();
     stats.forEach((report) => reports.set(report.id, report));
 
@@ -369,6 +420,9 @@ async function refreshWebRtcStats() {
       }
       if (report.type === "candidate-pair" && (report.selected || report.nominated || report.state === "succeeded")) {
         selectedPair = report;
+      }
+      if (report.type === "inbound-rtp" && (report.kind === "audio" || report.mediaType === "audio")) {
+        inboundAudio = report;
       }
     });
 
@@ -381,6 +435,26 @@ async function refreshWebRtcStats() {
       state.webrtc.bytesSent = selectedPair.bytesSent || 0;
       state.webrtc.bytesReceived = selectedPair.bytesReceived || 0;
       state.webrtc.roundTripTimeMs = typeof selectedPair.currentRoundTripTime === "number" ? selectedPair.currentRoundTripTime * 1000 : null;
+    }
+
+    if (inboundAudio) {
+      state.webrtc.inboundPacketsReceived = inboundAudio.packetsReceived || 0;
+      state.webrtc.inboundBytesReceived = inboundAudio.bytesReceived || 0;
+      state.webrtc.inboundPacketsLost = inboundAudio.packetsLost || 0;
+      state.webrtc.inboundJitterMs = typeof inboundAudio.jitter === "number" ? inboundAudio.jitter * 1000 : null;
+      state.webrtc.concealedSamples = typeof inboundAudio.concealedSamples === "number" ? inboundAudio.concealedSamples : null;
+      state.webrtc.concealmentEvents = typeof inboundAudio.concealmentEvents === "number" ? inboundAudio.concealmentEvents : null;
+      state.webrtc.audioLevel = typeof inboundAudio.audioLevel === "number" ? inboundAudio.audioLevel : null;
+    }
+
+    try {
+      const serverStats = await api("api/webrtc/stats");
+      state.webrtc.serverActiveSessions = serverStats.active_sessions || 0;
+      state.webrtc.serverAudioFramesSent = serverStats.audio_frames_sent || 0;
+      state.webrtc.serverAudioBytesSent = serverStats.audio_bytes_sent || 0;
+      state.webrtc.serverAudioError = serverStats.last_audio_send_error || null;
+    } catch (error) {
+      state.webrtc.serverAudioError = error.message;
     }
 
     state.webrtc.transportState = transport ? `${transport.dtlsState || "dtls:?"} / ${transport.iceState || "ice:?"}` : "-";
@@ -409,12 +483,23 @@ async function loadWebRtcConfig() {
   renderWebRtc();
 }
 
+async function playWebRtcAudio() {
+  if (!elements.webrtcAudioElement.srcObject) return;
+  try {
+    await elements.webrtcAudioElement.play();
+  } catch (error) {
+    state.webrtc.lastError = error.message;
+  }
+  renderWebRtc();
+}
+
 async function createWebRtcSession() {
   resetWebRtcStats();
   const config = await api("api/webrtc/config");
   state.webrtc.iceServers = config.ice_servers || [];
   const iceServers = state.webrtc.iceServers.map((url) => ({ urls: url }));
   const peerConnection = new RTCPeerConnection({ iceServers });
+  peerConnection.addTransceiver("audio", { direction: "recvonly" });
   const dataChannel = peerConnection.createDataChannel("diagnostics");
   state.webrtc.peerConnection = peerConnection;
   state.webrtc.dataChannel = dataChannel;
@@ -425,6 +510,18 @@ async function createWebRtcSession() {
   peerConnection.addEventListener("icegatheringstatechange", update);
   peerConnection.addEventListener("iceconnectionstatechange", update);
   peerConnection.addEventListener("connectionstatechange", update);
+  peerConnection.addEventListener("track", (event) => {
+    const stream = event.streams[0] || new MediaStream([event.track]);
+    state.webrtc.remoteStream = stream;
+    state.webrtc.remoteTrackState = `${event.track.kind}:${event.track.readyState}`;
+    elements.webrtcAudioElement.srcObject = stream;
+    event.track.addEventListener("ended", () => {
+      state.webrtc.remoteTrackState = `${event.track.kind}:ended`;
+      renderWebRtc();
+    });
+    playWebRtcAudio();
+    renderWebRtc();
+  });
   dataChannel.addEventListener("open", () => {
     state.webrtc.dataChannelState = dataChannel.readyState;
     dataChannel.send("ping");
@@ -458,6 +555,8 @@ async function createWebRtcSession() {
     peerConnection.close();
     state.webrtc.peerConnection = null;
     state.webrtc.dataChannel = null;
+    state.webrtc.remoteStream = null;
+    elements.webrtcAudioElement.srcObject = null;
     state.webrtc.sessionId = null;
     resetWebRtcStats();
     state.webrtc.lastError = error.message;
@@ -471,6 +570,9 @@ async function closeWebRtcSession() {
   stopWebRtcStatsTimer();
   state.webrtc.peerConnection = null;
   state.webrtc.dataChannel = null;
+  state.webrtc.remoteStream = null;
+  elements.webrtcAudioElement.pause();
+  elements.webrtcAudioElement.srcObject = null;
   state.webrtc.sessionId = null;
   resetWebRtcStats();
   if (peerConnection) peerConnection.close();
@@ -890,7 +992,12 @@ elements.stopButton.addEventListener("click", () =>
 elements.startAudioButton.addEventListener("click", () => runAction(startAudio));
 elements.stopAudioButton.addEventListener("click", () => runAction(stopAudio));
 elements.createWebRtcButton.addEventListener("click", () => runAction(createWebRtcSession));
+elements.playWebRtcAudioButton.addEventListener("click", () => runAction(playWebRtcAudio));
 elements.closeWebRtcButton.addEventListener("click", () => runAction(closeWebRtcSession));
+elements.webrtcAudioElement.addEventListener("play", renderWebRtc);
+elements.webrtcAudioElement.addEventListener("pause", renderWebRtc);
+elements.webrtcAudioElement.addEventListener("volumechange", renderWebRtc);
+elements.webrtcAudioElement.addEventListener("loadedmetadata", renderWebRtc);
 
 window.addEventListener("beforeunload", () => {
   if (state.socket && state.socket.readyState < WebSocket.CLOSING) {
@@ -899,6 +1006,7 @@ window.addEventListener("beforeunload", () => {
   if (state.webrtc.peerConnection) {
     state.webrtc.peerConnection.close();
   }
+  elements.webrtcAudioElement.srcObject = null;
   if (state.webrtc.sessionId) {
     fetch(appUrl(`api/webrtc/sessions/${encodeURIComponent(state.webrtc.sessionId)}`).href, {
       method: "DELETE",

@@ -6,11 +6,15 @@ use axum::{
 
 use crate::{
     api::{ApiError, ApiState},
-    webrtc::{OfferRequest, OfferResponse, WebRtcConfigResponse},
+    webrtc::{OfferRequest, OfferResponse, WebRtcConfigResponse, WebRtcStatsResponse},
 };
 
 pub async fn config(State(state): State<ApiState>) -> Json<WebRtcConfigResponse> {
     Json(state.webrtc.config_response())
+}
+
+pub async fn stats(State(state): State<ApiState>) -> Json<WebRtcStatsResponse> {
+    Json(state.webrtc.stats_response().await)
 }
 
 pub async fn offer(

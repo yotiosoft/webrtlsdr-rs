@@ -111,8 +111,23 @@
       .grid {
         display: grid;
         grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+        grid-template-areas:
+          "receiver webrtc"
+          "audio webrtc";
         align-items: start;
         gap: 18px;
+      }
+
+      .receiver-panel {
+        grid-area: receiver;
+      }
+
+      .webrtc-panel {
+        grid-area: webrtc;
+      }
+
+      .audio-panel {
+        grid-area: audio;
       }
 
       .panel {
@@ -144,6 +159,10 @@
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 10px;
+      }
+
+      audio {
+        width: 100%;
       }
 
       .metric {
@@ -210,6 +229,13 @@
           grid-template-columns: 1fr;
         }
 
+        .grid {
+          grid-template-areas:
+            "receiver"
+            "webrtc"
+            "audio";
+        }
+
         .fields,
         .metrics {
           grid-template-columns: 1fr;
@@ -233,7 +259,7 @@
       </header>
 
       <div class="grid">
-        <section class="panel stack">
+        <section class="panel stack receiver-panel">
           <h2>Receiver</h2>
           <label>
             Device
@@ -274,12 +300,14 @@
           <div id="message" class="error" role="status" aria-live="polite"></div>
         </section>
 
-        <section class="panel stack">
+        <section class="panel stack webrtc-panel">
           <h2>WebRTC PoC</h2>
           <div class="row">
-            <button id="createWebRtcButton" class="primary" type="button">Create WebRTC Session</button>
-            <button id="closeWebRtcButton" type="button">Close WebRTC Session</button>
+            <button id="createWebRtcButton" class="primary" type="button">Start WebRTC Audio</button>
+            <button id="playWebRtcAudioButton" type="button">Play WebRTC Audio</button>
+            <button id="closeWebRtcButton" type="button">Stop WebRTC Audio</button>
           </div>
+          <audio id="webrtcAudioElement" controls playsinline></audio>
           <div class="metrics">
             <div class="metric"><span>Session</span><strong id="webrtcSessionMetric" class="mono">-</strong></div>
             <div class="metric"><span>Signaling</span><strong id="webrtcSignalingMetric">closed</strong></div>
@@ -287,6 +315,17 @@
             <div class="metric"><span>ICE Connection</span><strong id="webrtcIceConnectionMetric">new</strong></div>
             <div class="metric"><span>Peer Connection</span><strong id="webrtcPeerConnectionMetric">closed</strong></div>
             <div class="metric"><span>Data Channel</span><strong id="webrtcDataChannelMetric">closed</strong></div>
+            <div class="metric"><span>Remote Track</span><strong id="webrtcRemoteTrackMetric">none</strong></div>
+            <div class="metric"><span>Audio Element</span><strong id="webrtcAudioElementMetric">empty</strong></div>
+            <div class="metric"><span>Muted / Volume</span><strong id="webrtcMutedMetric">false / 1.00</strong></div>
+            <div class="metric"><span>Playback</span><strong id="webrtcPlaybackMetric">paused</strong></div>
+            <div class="metric"><span>Inbound Packets / Bytes</span><strong id="webrtcInboundMetric">0 / 0</strong></div>
+            <div class="metric"><span>Inbound Lost / Jitter</span><strong id="webrtcInboundQualityMetric">0 / -</strong></div>
+            <div class="metric"><span>Concealment</span><strong id="webrtcConcealmentMetric">-</strong></div>
+            <div class="metric"><span>Audio Level</span><strong id="webrtcAudioLevelMetric">-</strong></div>
+            <div class="metric"><span>Server Sessions</span><strong id="webrtcServerSessionsMetric">0</strong></div>
+            <div class="metric"><span>Server Audio Frames / Bytes</span><strong id="webrtcServerAudioMetric">0 / 0</strong></div>
+            <div class="metric"><span>Server Audio Error</span><strong id="webrtcServerAudioErrorMetric">-</strong></div>
             <div class="metric"><span>Selected Candidate Pair</span><strong id="webrtcCandidatePairMetric" class="mono">-</strong></div>
             <div class="metric"><span>Transport</span><strong id="webrtcTransportMetric" class="mono">-</strong></div>
             <div class="metric"><span>Bytes Sent / Received</span><strong id="webrtcBytesMetric">0 / 0</strong></div>
@@ -296,7 +335,7 @@
           </div>
         </section>
 
-        <section class="panel stack">
+        <section class="panel stack audio-panel">
           <h2>Audio</h2>
           <label>
             PCM Transport

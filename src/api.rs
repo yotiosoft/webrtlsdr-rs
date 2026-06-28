@@ -46,6 +46,7 @@ pub fn router(webrtc_config: WebRtcConfig) -> Router {
         .route("/ws/audio-v1", get(audio_v1_websocket))
         .route("/api/devices", get(devices::list))
         .route("/api/webrtc/config", get(rtc::config))
+        .route("/api/webrtc/stats", get(rtc::stats))
         .route("/api/webrtc/offer", axum::routing::post(rtc::offer))
         .route(
             "/api/webrtc/sessions/:session_id",
