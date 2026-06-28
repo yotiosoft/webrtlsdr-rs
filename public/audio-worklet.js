@@ -8,10 +8,15 @@ class PcmPlayerProcessor extends AudioWorkletProcessor {
     this.writeIndex = 0;
     this.available = 0;
     this.underruns = 0;
+    this.overflows = 0;
     this.droppedSamples = 0;
+    this.receivedSamples = 0;
+    this.playedSamples = 0;
     this.framesUntilStats = 0;
     this.startThresholdSamples = options.processorOptions?.startThresholdSamples || Math.floor(sampleRate * 0.2);
     this.targetBufferedSamples = options.processorOptions?.targetBufferedSamples || Math.floor(sampleRate * 0.35);
+    this.lowWatermarkSamples = this.capacity;
+    this.highWatermarkSamples = 0;
     this.playing = false;
 
     this.port.onmessage = (event) => {
@@ -24,19 +29,32 @@ class PcmPlayerProcessor extends AudioWorkletProcessor {
   }
 
   push(samples) {
-    const overflow = Math.max(0, this.available + samples.length - this.capacity);
+    let incoming = samples;
+    this.receivedSamples += incoming.length;
+
+    if (incoming.length > this.capacity) {
+      const drop = incoming.length - this.capacity;
+      incoming = incoming.subarray(drop);
+      this.droppedSamples += drop;
+      this.overflows += 1;
+    }
+
+    const overflow = Math.max(0, this.available + incoming.length - this.capacity);
     if (overflow > 0) {
-      const drop = Math.min(this.available, Math.max(overflow, this.available - this.targetBufferedSamples));
+      const drop = Math.min(this.available, overflow);
       this.readIndex = (this.readIndex + drop) % this.capacity;
       this.available -= drop;
       this.droppedSamples += drop;
+      this.overflows += 1;
     }
 
-    for (let index = 0; index < samples.length; index += 1) {
-      this.buffer[this.writeIndex] = samples[index];
+    for (let index = 0; index < incoming.length; index += 1) {
+      this.buffer[this.writeIndex] = incoming[index];
       this.writeIndex = (this.writeIndex + 1) % this.capacity;
     }
-    this.available += samples.length;
+    this.available += incoming.length;
+    if (this.available < this.lowWatermarkSamples) this.lowWatermarkSamples = this.available;
+    if (this.available > this.highWatermarkSamples) this.highWatermarkSamples = this.available;
   }
 
   reset() {
@@ -44,7 +62,12 @@ class PcmPlayerProcessor extends AudioWorkletProcessor {
     this.writeIndex = 0;
     this.available = 0;
     this.underruns = 0;
+    this.overflows = 0;
     this.droppedSamples = 0;
+    this.receivedSamples = 0;
+    this.playedSamples = 0;
+    this.lowWatermarkSamples = this.capacity;
+    this.highWatermarkSamples = 0;
     this.playing = false;
   }
 
@@ -62,6 +85,8 @@ class PcmPlayerProcessor extends AudioWorkletProcessor {
         sample = this.buffer[this.readIndex];
         this.readIndex = (this.readIndex + 1) % this.capacity;
         this.available -= 1;
+        this.playedSamples += 1;
+        if (this.available < this.lowWatermarkSamples) this.lowWatermarkSamples = this.available;
       } else {
         if (this.playing) {
           this.underruns += 1;
@@ -80,8 +105,16 @@ class PcmPlayerProcessor extends AudioWorkletProcessor {
       this.port.postMessage({
         type: "stats",
         bufferedSamples: this.available,
+        capacitySamples: this.capacity,
+        initialBufferSamples: this.startThresholdSamples,
+        targetBufferSamples: this.targetBufferedSamples,
         underruns: this.underruns,
+        overflows: this.overflows,
         droppedSamples: this.droppedSamples,
+        receivedSamples: this.receivedSamples,
+        playedSamples: this.playedSamples,
+        lowWatermarkSamples: this.lowWatermarkSamples === this.capacity ? this.available : this.lowWatermarkSamples,
+        highWatermarkSamples: this.highWatermarkSamples,
         playing: this.playing,
       });
     }

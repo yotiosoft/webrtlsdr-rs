@@ -81,7 +81,14 @@ impl AudioStreamHub {
         }
     }
 
-    fn record_dropped_frames(&self, frames: u64) {
+    fn record_lagged_subscriber(&self, frames: u64) {
+        if let Ok(mut stats) = self.stats.lock() {
+            stats.frames_dropped = stats.frames_dropped.saturating_add(frames);
+            stats.lagged_subscribers = stats.lagged_subscribers.saturating_add(1);
+        }
+    }
+
+    fn record_send_drop(&self, frames: u64) {
         if let Ok(mut stats) = self.stats.lock() {
             stats.frames_dropped = stats.frames_dropped.saturating_add(frames);
         }
@@ -100,6 +107,7 @@ pub struct StreamStats {
     pub frames_broadcast: u64,
     pub bytes_broadcast: u64,
     pub frames_dropped: u64,
+    pub lagged_subscribers: u64,
     pub last_client_connected_unix_ms: Option<u64>,
     pub last_client_disconnected_unix_ms: Option<u64>,
     pub last_error: Option<String>,
@@ -159,7 +167,7 @@ async fn stream_audio(mut socket: WebSocket, hub: AudioStreamHub) -> Result<(), 
                                 return Err(format!("failed to send PCM frame: {error}"));
                             }
                             Err(_) => {
-                                hub.record_dropped_frames(1);
+                                hub.record_send_drop(1);
                                 return Err("timed out sending PCM frame".to_string());
                             }
                         }
@@ -169,7 +177,7 @@ async fn stream_audio(mut socket: WebSocket, hub: AudioStreamHub) -> Result<(), 
                             frames,
                             "WebSocket audio subscriber lagged; dropping old frames"
                         );
-                        hub.record_dropped_frames(frames);
+                        hub.record_lagged_subscriber(frames);
                     }
                     Err(broadcast::error::RecvError::Closed) => {
                         return Err("audio stream broadcaster closed".to_string());
@@ -240,8 +248,9 @@ mod tests {
     fn dropped_frames_are_tracked() {
         let hub = AudioStreamHub::default();
 
-        hub.record_dropped_frames(3);
+        hub.record_lagged_subscriber(3);
 
         assert_eq!(hub.stats().frames_dropped, 3);
+        assert_eq!(hub.stats().lagged_subscribers, 1);
     }
 }

@@ -278,17 +278,26 @@
             <button id="stopAudioButton" type="button">Stop Audio</button>
           </div>
           <div class="metrics">
-            <div class="metric"><span>WebSocket</span><strong id="wsMetric">disconnected</strong></div>
-            <div class="metric"><span>Frames</span><strong id="framesMetric">0</strong></div>
-            <div class="metric"><span>Bytes</span><strong id="bytesMetric">0</strong></div>
-            <div class="metric"><span>Buffered Samples</span><strong id="bufferMetric">0</strong></div>
-            <div class="metric"><span>Underruns</span><strong id="underrunMetric">0</strong></div>
-            <div class="metric"><span>Dropped Samples</span><strong id="droppedMetric">0</strong></div>
-          </div>
-          <div class="metrics">
+            <div class="metric"><span>Transport</span><strong id="wsMetric">disconnected</strong></div>
             <div class="metric"><span>AudioContext</span><strong id="contextMetric">closed</strong></div>
             <div class="metric"><span>Format</span><strong id="formatMetric" class="mono">unknown</strong></div>
+            <div class="metric"><span>Server Sample Rate</span><strong id="serverRateMetric">-</strong></div>
+            <div class="metric"><span>Browser Sample Rate</span><strong id="browserRateMetric">-</strong></div>
+            <div class="metric"><span>Buffered</span><strong id="bufferMetric">0 ms</strong></div>
+            <div class="metric"><span>Target Buffer</span><strong id="targetBufferMetric">-</strong></div>
+            <div class="metric"><span>Initial Buffer</span><strong id="initialBufferMetric">-</strong></div>
+            <div class="metric"><span>Watermark Low / High</span><strong id="watermarkMetric">-</strong></div>
+            <div class="metric"><span>Received Frames</span><strong id="framesMetric">0</strong></div>
+            <div class="metric"><span>Received Bytes</span><strong id="bytesMetric">0</strong></div>
+            <div class="metric"><span>Received Samples</span><strong id="receivedSamplesMetric">0</strong></div>
+            <div class="metric"><span>Played Samples</span><strong id="playedSamplesMetric">0</strong></div>
+            <div class="metric"><span>Underruns</span><strong id="underrunMetric">0</strong></div>
+            <div class="metric"><span>Overflows</span><strong id="overflowMetric">0</strong></div>
+            <div class="metric"><span>Dropped Samples</span><strong id="droppedMetric">0</strong></div>
+            <div class="metric"><span>Last Error</span><strong id="audioErrorMetric">-</strong></div>
             <div class="metric"><span>Server Stream Clients</span><strong id="clientsMetric">0</strong></div>
+            <div class="metric"><span>Server Frames / Bytes</span><strong id="streamBroadcastMetric">0 / 0</strong></div>
+            <div class="metric"><span>Server Drops / Lagged</span><strong id="streamDropMetric">0 / 0</strong></div>
           </div>
         </section>
       </div>

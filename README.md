@@ -161,9 +161,15 @@ On connect, the first message is text JSON metadata:
 ```
 
 After reception starts, subsequent WebSocket messages are binary PCM payloads
-with no JSON wrapper. The `stream` section of `/api/session/stats` reports
-active WebSocket clients, frames and bytes broadcast, dropped frames from lagging
-clients, the last connect/disconnect timestamps, and the last stream error.
+with no JSON wrapper. This raw PCM-over-WebSocket path is an MVP diagnostic,
+comparison, and fallback transport. It intentionally exposes underruns,
+overflows, and dropped samples instead of trying to hide all jitter in the audio
+thread. The planned stable browser audio transport is WebRTC with Opus in a later
+step.
+
+The `stream` section of `/api/session/stats` reports active WebSocket clients,
+frames and bytes broadcast, dropped frames, lagged subscriber events, the last
+connect/disconnect timestamps, and the last stream error.
 
 ## Browser Playback
 
@@ -178,8 +184,10 @@ select an RTL-SDR, connect, tune a frequency such as `100000000`, apply the
 sample rate and gain settings, start receiving, then press Start Audio. The page
 connects to `/ws/audio`, reads the initial PCM metadata message, converts binary
 signed 16-bit little-endian mono PCM frames to `Float32Array` samples, and plays
-them through an AudioWorklet. The audio panel shows WebSocket state, received
-frames and bytes, buffered samples, underruns, and dropped samples.
+them through an AudioWorklet. The PCM diagnostics panel shows transport state,
+AudioContext state, server/browser sample rates, received frames and bytes,
+buffered milliseconds, target and initial buffer milliseconds, underruns,
+overflows, dropped samples, watermarks, and the last browser-side audio error.
 
 AudioWorklet requires a secure browser context. For development from another
 host, use an SSH tunnel and open the app as localhost:

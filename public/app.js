@@ -20,11 +20,22 @@ const elements = {
   framesMetric: document.querySelector("#framesMetric"),
   bytesMetric: document.querySelector("#bytesMetric"),
   bufferMetric: document.querySelector("#bufferMetric"),
+  targetBufferMetric: document.querySelector("#targetBufferMetric"),
+  initialBufferMetric: document.querySelector("#initialBufferMetric"),
+  watermarkMetric: document.querySelector("#watermarkMetric"),
   underrunMetric: document.querySelector("#underrunMetric"),
+  overflowMetric: document.querySelector("#overflowMetric"),
   droppedMetric: document.querySelector("#droppedMetric"),
+  receivedSamplesMetric: document.querySelector("#receivedSamplesMetric"),
+  playedSamplesMetric: document.querySelector("#playedSamplesMetric"),
   contextMetric: document.querySelector("#contextMetric"),
   formatMetric: document.querySelector("#formatMetric"),
+  serverRateMetric: document.querySelector("#serverRateMetric"),
+  browserRateMetric: document.querySelector("#browserRateMetric"),
+  audioErrorMetric: document.querySelector("#audioErrorMetric"),
   clientsMetric: document.querySelector("#clientsMetric"),
+  streamBroadcastMetric: document.querySelector("#streamBroadcastMetric"),
+  streamDropMetric: document.querySelector("#streamDropMetric"),
 };
 
 const state = {
@@ -38,12 +49,28 @@ const state = {
     wsState: "disconnected",
     frames: 0,
     bytes: 0,
+    sampleRate: null,
+    contextSampleRate: null,
     bufferedSamples: 0,
+    targetBufferSamples: 0,
+    initialBufferSamples: 0,
+    lowWatermarkSamples: 0,
+    highWatermarkSamples: 0,
     underruns: 0,
+    overflows: 0,
     droppedSamples: 0,
+    receivedSamples: 0,
+    playedSamples: 0,
     format: "unknown",
+    lastError: null,
   },
 };
+
+const AUDIO_INITIAL_BUFFER_SECONDS = 0.75;
+const AUDIO_TARGET_BUFFER_SECONDS = 1.25;
+const AUDIO_CAPACITY_SECONDS = 4;
+const AUDIO_RENDER_INTERVAL_MS = 250;
+let audioRenderTimer = null;
 
 const appBaseUrl = new URL("./", import.meta.url);
 
@@ -153,9 +180,23 @@ function syncSettingsInputs() {
   if (settings?.gain_tenths_db !== undefined) elements.gainInput.value = settings.gain_tenths_db;
 }
 
+function samplesToMs(samples, sampleRate) {
+  if (!sampleRate) return "-";
+  return `${Math.round((samples / sampleRate) * 1000).toLocaleString()} ms`;
+}
+
+function queueAudioRender() {
+  if (audioRenderTimer !== null) return;
+  audioRenderTimer = window.setTimeout(() => {
+    audioRenderTimer = null;
+    renderAudio();
+  }, AUDIO_RENDER_INTERVAL_MS);
+}
+
 function renderAudio() {
   const running = state.audioContext?.state === "running";
   const audioOpen = state.socket || state.audioContext;
+  const sampleRate = state.audio.contextSampleRate || state.audio.sampleRate;
 
   setPill(elements.audioState, running ? "Audio running" : "Audio stopped", running ? "good" : "");
   elements.startAudioButton.disabled = state.busy || Boolean(audioOpen);
@@ -163,16 +204,27 @@ function renderAudio() {
   elements.wsMetric.textContent = state.audio.wsState;
   elements.framesMetric.textContent = state.audio.frames.toLocaleString();
   elements.bytesMetric.textContent = state.audio.bytes.toLocaleString();
-  elements.bufferMetric.textContent = state.audio.bufferedSamples.toLocaleString();
+  elements.bufferMetric.textContent = samplesToMs(state.audio.bufferedSamples, sampleRate);
+  elements.targetBufferMetric.textContent = samplesToMs(state.audio.targetBufferSamples, sampleRate);
+  elements.initialBufferMetric.textContent = samplesToMs(state.audio.initialBufferSamples, sampleRate);
+  elements.watermarkMetric.textContent = `${samplesToMs(state.audio.lowWatermarkSamples, sampleRate)} / ${samplesToMs(state.audio.highWatermarkSamples, sampleRate)}`;
   elements.underrunMetric.textContent = state.audio.underruns.toLocaleString();
+  elements.overflowMetric.textContent = state.audio.overflows.toLocaleString();
   elements.droppedMetric.textContent = state.audio.droppedSamples.toLocaleString();
+  elements.receivedSamplesMetric.textContent = state.audio.receivedSamples.toLocaleString();
+  elements.playedSamplesMetric.textContent = state.audio.playedSamples.toLocaleString();
   elements.contextMetric.textContent = state.audioContext?.state || "closed";
   elements.formatMetric.textContent = state.audio.format;
+  elements.serverRateMetric.textContent = state.audio.sampleRate ? state.audio.sampleRate.toLocaleString() : "-";
+  elements.browserRateMetric.textContent = state.audio.contextSampleRate ? state.audio.contextSampleRate.toLocaleString() : "-";
+  elements.audioErrorMetric.textContent = state.audio.lastError || "-";
 }
 
 function renderStats(stats) {
   if (stats?.stream) {
     elements.clientsMetric.textContent = String(stats.stream.active_clients);
+    elements.streamBroadcastMetric.textContent = `${stats.stream.frames_broadcast.toLocaleString()} / ${stats.stream.bytes_broadcast.toLocaleString()}`;
+    elements.streamDropMetric.textContent = `${stats.stream.frames_dropped.toLocaleString()} / ${(stats.stream.lagged_subscribers || 0).toLocaleString()}`;
   }
 }
 
@@ -248,10 +300,20 @@ function resetAudioStats() {
     wsState: "disconnected",
     frames: 0,
     bytes: 0,
+    sampleRate: null,
+    contextSampleRate: null,
     bufferedSamples: 0,
+    targetBufferSamples: 0,
+    initialBufferSamples: 0,
+    lowWatermarkSamples: 0,
+    highWatermarkSamples: 0,
     underruns: 0,
+    overflows: 0,
     droppedSamples: 0,
+    receivedSamples: 0,
+    playedSamples: 0,
     format: "unknown",
+    lastError: null,
   };
 }
 
@@ -276,22 +338,36 @@ async function ensureAudioContext(sampleRate) {
     }
 
     await state.audioContext.audioWorklet.addModule(appUrl("audio-worklet.js").href);
+    const capacitySamples = Math.floor(state.audioContext.sampleRate * AUDIO_CAPACITY_SECONDS);
+    const startThresholdSamples = Math.floor(state.audioContext.sampleRate * AUDIO_INITIAL_BUFFER_SECONDS);
+    const targetBufferedSamples = Math.floor(state.audioContext.sampleRate * AUDIO_TARGET_BUFFER_SECONDS);
+    state.audio.contextSampleRate = state.audioContext.sampleRate;
+    state.audio.initialBufferSamples = startThresholdSamples;
+    state.audio.targetBufferSamples = targetBufferedSamples;
+
     state.workletNode = new AudioWorkletNode(state.audioContext, "pcm-player", {
       numberOfInputs: 0,
       numberOfOutputs: 1,
       outputChannelCount: [2],
       processorOptions: {
-        capacitySamples: Math.floor(state.audioContext.sampleRate * 4),
-        startThresholdSamples: Math.floor(state.audioContext.sampleRate * 0.75),
-        targetBufferedSamples: Math.floor(state.audioContext.sampleRate * 1.25),
+        capacitySamples,
+        startThresholdSamples,
+        targetBufferedSamples,
       },
     });
     state.workletNode.port.onmessage = (event) => {
       if (event.data?.type !== "stats") return;
       state.audio.bufferedSamples = event.data.bufferedSamples || 0;
+      state.audio.initialBufferSamples = event.data.initialBufferSamples || state.audio.initialBufferSamples;
+      state.audio.targetBufferSamples = event.data.targetBufferSamples || state.audio.targetBufferSamples;
+      state.audio.lowWatermarkSamples = event.data.lowWatermarkSamples || 0;
+      state.audio.highWatermarkSamples = event.data.highWatermarkSamples || 0;
       state.audio.underruns = event.data.underruns || 0;
+      state.audio.overflows = event.data.overflows || 0;
       state.audio.droppedSamples = event.data.droppedSamples || 0;
-      renderAudio();
+      state.audio.receivedSamples = event.data.receivedSamples || state.audio.receivedSamples;
+      state.audio.playedSamples = event.data.playedSamples || 0;
+      queueAudioRender();
     };
     state.workletNode.connect(state.audioContext.destination);
   }
@@ -313,11 +389,13 @@ function pcmI16LeToFloat32(buffer) {
 async function startAudio() {
   resetAudioStats();
   state.audio.wsState = "connecting";
+  state.audio.lastError = null;
   renderAudio();
   try {
     await ensureAudioContext(48000);
   } catch (error) {
     state.audio.wsState = "disconnected";
+    state.audio.lastError = error.message;
     renderAudio();
     throw error;
   }
@@ -335,6 +413,7 @@ async function startAudio() {
     try {
       if (typeof event.data === "string") {
         const metadata = JSON.parse(event.data);
+        state.audio.sampleRate = metadata.sample_rate_hz || state.audio.sampleRate;
         state.audio.format = `${metadata.format}, ${metadata.channels} ch, ${metadata.sample_rate_hz} Hz`;
         await ensureAudioContext(metadata.sample_rate_hz);
         renderAudio();
@@ -344,11 +423,14 @@ async function startAudio() {
       const samples = pcmI16LeToFloat32(event.data);
       state.audio.frames += 1;
       state.audio.bytes += event.data.byteLength;
+      state.audio.receivedSamples += samples.length;
       state.workletNode?.port.postMessage({ type: "samples", samples }, [samples.buffer]);
-      renderAudio();
+      queueAudioRender();
     } catch (error) {
       console.error(error);
+      state.audio.lastError = error.message;
       setMessage(error.message);
+      renderAudio();
     }
   });
 
@@ -360,7 +442,8 @@ async function startAudio() {
 
   socket.addEventListener("error", () => {
     state.audio.wsState = "error";
-    setMessage("WebSocket audio connection failed");
+    state.audio.lastError = "WebSocket audio connection failed";
+    setMessage(state.audio.lastError);
     renderAudio();
   });
 }
@@ -381,6 +464,7 @@ async function stopAudio() {
     state.audioContext = null;
   }
 
+  state.audio.contextSampleRate = null;
   state.audio.wsState = "disconnected";
   renderAudio();
   await refreshStats();
