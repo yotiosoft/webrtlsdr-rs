@@ -12,11 +12,13 @@ const elements = {
   stopButton: document.querySelector("#stopButton"),
   startAudioButton: document.querySelector("#startAudioButton"),
   stopAudioButton: document.querySelector("#stopAudioButton"),
+  audioProtocolSelect: document.querySelector("#audioProtocolSelect"),
   connectedState: document.querySelector("#connectedState"),
   receivingState: document.querySelector("#receivingState"),
   audioState: document.querySelector("#audioState"),
   message: document.querySelector("#message"),
   wsMetric: document.querySelector("#wsMetric"),
+  protocolMetric: document.querySelector("#protocolMetric"),
   framesMetric: document.querySelector("#framesMetric"),
   bytesMetric: document.querySelector("#bytesMetric"),
   bufferMetric: document.querySelector("#bufferMetric"),
@@ -27,6 +29,14 @@ const elements = {
   overflowMetric: document.querySelector("#overflowMetric"),
   droppedMetric: document.querySelector("#droppedMetric"),
   receivedSamplesMetric: document.querySelector("#receivedSamplesMetric"),
+  lastSequenceMetric: document.querySelector("#lastSequenceMetric"),
+  sequenceGapMetric: document.querySelector("#sequenceGapMetric"),
+  outOfOrderMetric: document.querySelector("#outOfOrderMetric"),
+  invalidFrameMetric: document.querySelector("#invalidFrameMetric"),
+  jitterMetric: document.querySelector("#jitterMetric"),
+  serverPtsMetric: document.querySelector("#serverPtsMetric"),
+  clientReceivedMetric: document.querySelector("#clientReceivedMetric"),
+  driftMetric: document.querySelector("#driftMetric"),
   playedSamplesMetric: document.querySelector("#playedSamplesMetric"),
   contextMetric: document.querySelector("#contextMetric"),
   formatMetric: document.querySelector("#formatMetric"),
@@ -61,6 +71,19 @@ const state = {
     droppedSamples: 0,
     receivedSamples: 0,
     playedSamples: 0,
+    protocol: "-",
+    expectedSequence: null,
+    lastSequence: null,
+    sequenceGaps: 0,
+    outOfOrderFrames: 0,
+    invalidFrames: 0,
+    lastArrivalMs: null,
+    firstArrivalMs: null,
+    jitterAvgMs: null,
+    jitterMaxMs: 0,
+    serverPtsMs: null,
+    clientReceivedMs: null,
+    estimatedDriftMs: null,
     format: "unknown",
     lastError: null,
   },
@@ -70,6 +93,10 @@ const AUDIO_INITIAL_BUFFER_SECONDS = 0.75;
 const AUDIO_TARGET_BUFFER_SECONDS = 1.25;
 const AUDIO_CAPACITY_SECONDS = 4;
 const AUDIO_RENDER_INTERVAL_MS = 250;
+const PCM_V1_HEADER_LEN = 36;
+const PCM_V1_MAGIC = "WPCM";
+const PCM_V1_VERSION = 1;
+const PCM_FORMAT_I16LE = 1;
 let audioRenderTimer = null;
 
 const appBaseUrl = new URL("./", import.meta.url);
@@ -201,7 +228,9 @@ function renderAudio() {
   setPill(elements.audioState, running ? "Audio running" : "Audio stopped", running ? "good" : "");
   elements.startAudioButton.disabled = state.busy || Boolean(audioOpen);
   elements.stopAudioButton.disabled = state.busy || !audioOpen;
+  elements.audioProtocolSelect.disabled = Boolean(audioOpen);
   elements.wsMetric.textContent = state.audio.wsState;
+  elements.protocolMetric.textContent = state.audio.protocol;
   elements.framesMetric.textContent = state.audio.frames.toLocaleString();
   elements.bytesMetric.textContent = state.audio.bytes.toLocaleString();
   elements.bufferMetric.textContent = samplesToMs(state.audio.bufferedSamples, sampleRate);
@@ -212,6 +241,14 @@ function renderAudio() {
   elements.overflowMetric.textContent = state.audio.overflows.toLocaleString();
   elements.droppedMetric.textContent = state.audio.droppedSamples.toLocaleString();
   elements.receivedSamplesMetric.textContent = state.audio.receivedSamples.toLocaleString();
+  elements.lastSequenceMetric.textContent = state.audio.lastSequence === null ? "-" : state.audio.lastSequence.toString();
+  elements.sequenceGapMetric.textContent = state.audio.sequenceGaps.toLocaleString();
+  elements.outOfOrderMetric.textContent = state.audio.outOfOrderFrames.toLocaleString();
+  elements.invalidFrameMetric.textContent = state.audio.invalidFrames.toLocaleString();
+  elements.jitterMetric.textContent = state.audio.jitterAvgMs === null ? "-" : `${state.audio.jitterAvgMs.toFixed(1)} / ${state.audio.jitterMaxMs.toFixed(1)} ms`;
+  elements.serverPtsMetric.textContent = state.audio.serverPtsMs === null ? "-" : `${Math.round(state.audio.serverPtsMs).toLocaleString()} ms`;
+  elements.clientReceivedMetric.textContent = state.audio.clientReceivedMs === null ? "-" : `${Math.round(state.audio.clientReceivedMs).toLocaleString()} ms`;
+  elements.driftMetric.textContent = state.audio.estimatedDriftMs === null ? "-" : `${Math.round(state.audio.estimatedDriftMs).toLocaleString()} ms`;
   elements.playedSamplesMetric.textContent = state.audio.playedSamples.toLocaleString();
   elements.contextMetric.textContent = state.audioContext?.state || "closed";
   elements.formatMetric.textContent = state.audio.format;
@@ -223,8 +260,11 @@ function renderAudio() {
 function renderStats(stats) {
   if (stats?.stream) {
     elements.clientsMetric.textContent = String(stats.stream.active_clients);
-    elements.streamBroadcastMetric.textContent = `${stats.stream.frames_broadcast.toLocaleString()} / ${stats.stream.bytes_broadcast.toLocaleString()}`;
-    elements.streamDropMetric.textContent = `${stats.stream.frames_dropped.toLocaleString()} / ${(stats.stream.lagged_subscribers || 0).toLocaleString()}`;
+    const framesSent = stats.stream.frames_sent ?? stats.stream.frames_broadcast ?? 0;
+    const bytesSent = stats.stream.bytes_sent ?? stats.stream.bytes_broadcast ?? 0;
+    const droppedFrames = stats.stream.dropped_frames ?? stats.stream.frames_dropped ?? 0;
+    elements.streamBroadcastMetric.textContent = `${framesSent.toLocaleString()} / ${bytesSent.toLocaleString()}`;
+    elements.streamDropMetric.textContent = `${droppedFrames.toLocaleString()} / ${(stats.stream.lagged_subscribers || 0).toLocaleString()}`;
   }
 }
 
@@ -312,6 +352,19 @@ function resetAudioStats() {
     droppedSamples: 0,
     receivedSamples: 0,
     playedSamples: 0,
+    protocol: "-",
+    expectedSequence: null,
+    lastSequence: null,
+    sequenceGaps: 0,
+    outOfOrderFrames: 0,
+    invalidFrames: 0,
+    lastArrivalMs: null,
+    firstArrivalMs: null,
+    jitterAvgMs: null,
+    jitterMaxMs: 0,
+    serverPtsMs: null,
+    clientReceivedMs: null,
+    estimatedDriftMs: null,
     format: "unknown",
     lastError: null,
   };
@@ -377,13 +430,80 @@ async function ensureAudioContext(sampleRate) {
   }
 }
 
-function pcmI16LeToFloat32(buffer) {
-  const view = new DataView(buffer);
-  const samples = new Float32Array(Math.floor(buffer.byteLength / 2));
+function pcmI16LeToFloat32(buffer, byteOffset = 0, byteLength = buffer.byteLength - byteOffset) {
+  const view = new DataView(buffer, byteOffset, byteLength);
+  const samples = new Float32Array(Math.floor(byteLength / 2));
   for (let index = 0; index < samples.length; index += 1) {
     samples[index] = view.getInt16(index * 2, true) / 32768;
   }
   return samples;
+}
+
+function readU64Le(view, offset) {
+  return view.getBigUint64(offset, true);
+}
+
+function addSequenceGap(gap) {
+  const capped = gap > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(gap);
+  state.audio.sequenceGaps += capped;
+}
+
+function parsePcmV1Frame(buffer) {
+  if (buffer.byteLength < PCM_V1_HEADER_LEN) {
+    throw new Error("PCM v1 frame shorter than header");
+  }
+
+  const view = new DataView(buffer);
+  const magic = String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+  const version = view.getUint8(4);
+  const headerLen = view.getUint8(5);
+  const format = view.getUint8(6);
+  const channels = view.getUint8(7);
+  const sampleRate = view.getUint32(8, true);
+  const sampleCount = view.getUint32(12, true);
+  const sequence = readU64Le(view, 16);
+  const ptsSamples = readU64Le(view, 24);
+  const payloadBytes = view.getUint32(32, true);
+
+  if (magic !== PCM_V1_MAGIC) throw new Error("PCM v1 bad magic");
+  if (version !== PCM_V1_VERSION) throw new Error(`PCM v1 unsupported version ${version}`);
+  if (headerLen < PCM_V1_HEADER_LEN || headerLen > buffer.byteLength) throw new Error("PCM v1 invalid header length");
+  if (format !== PCM_FORMAT_I16LE) throw new Error(`PCM v1 unsupported format ${format}`);
+  if (channels !== 1) throw new Error(`PCM v1 unsupported channels ${channels}`);
+  if (payloadBytes !== sampleCount * channels * 2) throw new Error("PCM v1 payload_bytes mismatch");
+  if (buffer.byteLength !== headerLen + payloadBytes) throw new Error("PCM v1 message length mismatch");
+
+  const now = performance.now();
+  if (state.audio.firstArrivalMs === null) state.audio.firstArrivalMs = now;
+  if (state.audio.expectedSequence !== null) {
+    if (sequence > state.audio.expectedSequence) {
+      addSequenceGap(sequence - state.audio.expectedSequence);
+    } else if (sequence < state.audio.expectedSequence) {
+      state.audio.outOfOrderFrames += 1;
+    }
+  }
+
+  if (state.audio.lastArrivalMs !== null) {
+    const expectedMs = (sampleCount / sampleRate) * 1000;
+    const arrivalIntervalMs = now - state.audio.lastArrivalMs;
+    const jitterMs = Math.abs(arrivalIntervalMs - expectedMs);
+    state.audio.jitterAvgMs = state.audio.jitterAvgMs === null ? jitterMs : state.audio.jitterAvgMs * 0.9 + jitterMs * 0.1;
+    state.audio.jitterMaxMs = Math.max(state.audio.jitterMaxMs, jitterMs);
+  }
+
+  state.audio.lastArrivalMs = now;
+  state.audio.expectedSequence = sequence + 1n;
+  state.audio.lastSequence = sequence;
+  state.audio.serverPtsMs = (Number(ptsSamples) / sampleRate) * 1000;
+  state.audio.clientReceivedMs = now - state.audio.firstArrivalMs;
+  state.audio.estimatedDriftMs = state.audio.clientReceivedMs - state.audio.serverPtsMs;
+
+  return {
+    samples: pcmI16LeToFloat32(buffer, headerLen, payloadBytes),
+    sampleRate,
+    sampleCount,
+    payloadBytes,
+  };
 }
 
 async function startAudio() {
@@ -400,11 +520,17 @@ async function startAudio() {
     throw error;
   }
 
-  const socket = new WebSocket(websocketUrl("ws/audio").href);
+  const selectedProtocol = elements.audioProtocolSelect.value;
+  const endpointPath = selectedProtocol === "v1" ? "ws/audio-v1" : "ws/audio";
+  const endpointUrl = websocketUrl(endpointPath).href;
+  const socket = new WebSocket(endpointUrl);
+  let socketOpened = false;
+  state.audio.protocol = selectedProtocol === "v1" ? "pcm-v1" : "legacy-raw";
   state.socket = socket;
   socket.binaryType = "arraybuffer";
 
   socket.addEventListener("open", () => {
+    socketOpened = true;
     state.audio.wsState = "connected";
     renderAudio();
   });
@@ -413,16 +539,41 @@ async function startAudio() {
     try {
       if (typeof event.data === "string") {
         const metadata = JSON.parse(event.data);
-        state.audio.sampleRate = metadata.sample_rate_hz || state.audio.sampleRate;
-        state.audio.format = `${metadata.format}, ${metadata.channels} ch, ${metadata.sample_rate_hz} Hz`;
-        await ensureAudioContext(metadata.sample_rate_hz);
+        if (metadata.type === "audio_protocol") {
+          state.audio.sampleRate = metadata.audio?.sample_rate_hz || state.audio.sampleRate;
+          state.audio.protocol = `${metadata.protocol} v${metadata.version}`;
+          state.audio.format = `${metadata.audio?.format}, ${metadata.audio?.channels} ch, ${metadata.audio?.sample_rate_hz} Hz`;
+          await ensureAudioContext(metadata.audio?.sample_rate_hz || 48000);
+        } else {
+          state.audio.sampleRate = metadata.sample_rate_hz || state.audio.sampleRate;
+          state.audio.protocol = "legacy-raw";
+          state.audio.format = `${metadata.format}, ${metadata.channels} ch, ${metadata.sample_rate_hz} Hz`;
+          await ensureAudioContext(metadata.sample_rate_hz);
+        }
         renderAudio();
         return;
       }
 
-      const samples = pcmI16LeToFloat32(event.data);
+      let samples;
+      let payloadBytes = event.data.byteLength;
+      if (selectedProtocol === "v1") {
+        try {
+          const frame = parsePcmV1Frame(event.data);
+          samples = frame.samples;
+          payloadBytes = frame.payloadBytes;
+          state.audio.sampleRate = frame.sampleRate;
+        } catch (error) {
+          state.audio.invalidFrames += 1;
+          state.audio.lastError = error.message;
+          queueAudioRender();
+          return;
+        }
+      } else {
+        samples = pcmI16LeToFloat32(event.data);
+      }
+
       state.audio.frames += 1;
-      state.audio.bytes += event.data.byteLength;
+      state.audio.bytes += payloadBytes;
       state.audio.receivedSamples += samples.length;
       state.workletNode?.port.postMessage({ type: "samples", samples }, [samples.buffer]);
       queueAudioRender();
@@ -435,14 +586,32 @@ async function startAudio() {
   });
 
   socket.addEventListener("close", () => {
+    if (state.socket !== socket) return;
+    state.socket = null;
     state.audio.wsState = "disconnected";
-    if (state.socket === socket) state.socket = null;
     renderAudio();
   });
 
   socket.addEventListener("error", () => {
+    if (!socketOpened && selectedProtocol === "v1") {
+      if (state.socket === socket) state.socket = null;
+      elements.audioProtocolSelect.value = "legacy";
+      state.audio.wsState = "connecting";
+      state.audio.lastError = `PCM v1 WebSocket failed at ${endpointUrl}; retrying legacy PCM`;
+      setMessage(state.audio.lastError);
+      renderAudio();
+      startAudio().catch((error) => {
+        console.error(error);
+        state.audio.wsState = "error";
+        state.audio.lastError = error.message;
+        setMessage(error.message);
+        renderAudio();
+      });
+      return;
+    }
+
     state.audio.wsState = "error";
-    state.audio.lastError = "WebSocket audio connection failed";
+    state.audio.lastError = `WebSocket audio connection failed at ${endpointUrl}`;
     setMessage(state.audio.lastError);
     renderAudio();
   });

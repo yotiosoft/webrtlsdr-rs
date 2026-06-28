@@ -147,29 +147,82 @@ During reception, `bytes_read`, `dsp.audio_samples_produced`,
 and `pcm.peak_before_clamp` should update as IQ blocks are AM-demodulated into
 internal `f32` audio samples and converted to PCM.
 
-The server also exposes raw mono signed 16-bit little-endian PCM over
-WebSocket:
+The server exposes two mono signed 16-bit little-endian PCM WebSocket paths:
 
 ```sh
 websocat ws://127.0.0.1:3000/ws/audio
+websocat ws://127.0.0.1:3000/ws/audio-v1
 ```
 
-On connect, the first message is text JSON metadata:
+`/ws/audio` is the legacy raw PCM compatibility endpoint. On connect, the first
+message is text JSON metadata:
 
 ```json
 {"type":"audio_format","format":"i16le","channels":1,"sample_rate_hz":48000}
 ```
 
-After reception starts, subsequent WebSocket messages are binary PCM payloads
-with no JSON wrapper. This raw PCM-over-WebSocket path is an MVP diagnostic,
-comparison, and fallback transport. It intentionally exposes underruns,
-overflows, and dropped samples instead of trying to hide all jitter in the audio
-thread. The planned stable browser audio transport is WebRTC with Opus in a later
-step.
+After reception starts, subsequent legacy WebSocket messages are binary PCM
+payloads with no wrapper.
+
+`/ws/audio-v1` uses PCM Frame Protocol v1. On connect, the first message is text
+JSON protocol metadata:
+
+```json
+{
+  "type": "audio_protocol",
+  "protocol": "webrtlsdr-pcm",
+  "version": 1,
+  "endpoint": "/ws/audio-v1",
+  "frame": {
+    "kind": "binary",
+    "header": "fixed",
+    "header_len": 36,
+    "endianness": "little"
+  },
+  "audio": {
+    "format": "i16le",
+    "format_code": 1,
+    "channels": 1,
+    "sample_rate_hz": 48000
+  }
+}
+```
+
+Each following v1 WebSocket binary message is one complete fixed-header frame
+plus PCM payload:
+
+```text
+offset  size  type      field
+0       4     bytes     magic = "WPCM"
+4       1     u8        version = 1
+5       1     u8        header_len = 36
+6       1     u8        format = 1 for i16le
+7       1     u8        channels = 1
+8       4     u32le     sample_rate_hz
+12      4     u32le     sample_count
+16      8     u64le     sequence
+24      8     u64le     pts_samples
+32      4     u32le     payload_bytes
+36      ...   bytes     PCM payload
+```
+
+`payload_bytes` must equal `sample_count * channels * 2`. `sequence` increments
+by one per PCM frame, and `pts_samples` is the cumulative mono sample position
+from the start of the current receive run. Starting reception creates a fresh
+encoder, so `sequence` and `pts_samples` restart at zero for each start.
+
+The browser UI defaults to PCM v1 and can switch to legacy raw PCM before audio
+starts. PCM v1 diagnostics show sequence gaps, out-of-order frames, invalid
+frames, arrival jitter, server PTS, client receive time, estimated drift, and the
+AudioWorklet buffer behavior. This PCM-over-WebSocket path remains a diagnostic,
+comparison, and fallback transport; the planned stable browser audio transport is
+WebRTC with Opus in a later step.
 
 The `stream` section of `/api/session/stats` reports active WebSocket clients,
-frames and bytes broadcast, dropped frames, lagged subscriber events, the last
-connect/disconnect timestamps, and the last stream error.
+frames, bytes, samples, last sequence, last PTS, dropped frames, lagged
+subscriber events, the last connect/disconnect timestamps, and the last stream
+error. Legacy field names such as `frames_broadcast`, `bytes_broadcast`, and
+`frames_dropped` are also retained for compatibility.
 
 ## Browser Playback
 
@@ -205,6 +258,8 @@ proxy the whole path to this server and keep the trailing slash:
 
 ```apache
 RedirectMatch 301 ^/rtl-sdr$ /rtl-sdr/
+ProxyPass /rtl-sdr/ws/audio-v1 ws://127.0.0.1:3000/ws/audio-v1
+ProxyPassReverse /rtl-sdr/ws/audio-v1 ws://127.0.0.1:3000/ws/audio-v1
 ProxyPass /rtl-sdr/ws/audio ws://127.0.0.1:3000/ws/audio
 ProxyPassReverse /rtl-sdr/ws/audio ws://127.0.0.1:3000/ws/audio
 ProxyPass /rtl-sdr/ http://127.0.0.1:3000/

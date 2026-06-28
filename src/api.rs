@@ -36,6 +36,7 @@ pub fn router() -> Router {
         .route("/audio-worklet.js", get(audio_worklet_js))
         .route("/health", get(health))
         .route("/ws/audio", get(audio_websocket))
+        .route("/ws/audio-v1", get(audio_v1_websocket))
         .route("/api/devices", get(devices::list))
         .route("/api/session", get(session::get))
         .route(
@@ -90,7 +91,26 @@ async fn audio_websocket(
     State(state): State<ApiState>,
     websocket: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    websocket.on_upgrade(|socket| crate::stream::serve_audio_websocket(socket, state.audio_stream))
+    websocket.on_upgrade(|socket| {
+        crate::stream::serve_audio_websocket(
+            socket,
+            state.audio_stream,
+            crate::stream::AudioWebSocketProtocol::LegacyRawPcm,
+        )
+    })
+}
+
+async fn audio_v1_websocket(
+    State(state): State<ApiState>,
+    websocket: WebSocketUpgrade,
+) -> impl IntoResponse {
+    websocket.on_upgrade(|socket| {
+        crate::stream::serve_audio_websocket(
+            socket,
+            state.audio_stream,
+            crate::stream::AudioWebSocketProtocol::PcmFrameV1,
+        )
+    })
 }
 
 #[derive(Serialize)]

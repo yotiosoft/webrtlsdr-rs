@@ -111,6 +111,7 @@
       .grid {
         display: grid;
         grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+        align-items: start;
         gap: 18px;
       }
 
@@ -123,6 +124,7 @@
 
       .stack {
         display: grid;
+        align-content: start;
         gap: 14px;
       }
 
@@ -273,12 +275,20 @@
 
         <section class="panel stack">
           <h2>Audio</h2>
+          <label>
+            PCM Transport
+            <select id="audioProtocolSelect">
+              <option value="v1" selected>PCM v1</option>
+              <option value="legacy">Legacy PCM</option>
+            </select>
+          </label>
           <div class="row">
             <button id="startAudioButton" class="primary" type="button">Start Audio</button>
             <button id="stopAudioButton" type="button">Stop Audio</button>
           </div>
           <div class="metrics">
             <div class="metric"><span>Transport</span><strong id="wsMetric">disconnected</strong></div>
+            <div class="metric"><span>Protocol</span><strong id="protocolMetric" class="mono">-</strong></div>
             <div class="metric"><span>AudioContext</span><strong id="contextMetric">closed</strong></div>
             <div class="metric"><span>Format</span><strong id="formatMetric" class="mono">unknown</strong></div>
             <div class="metric"><span>Server Sample Rate</span><strong id="serverRateMetric">-</strong></div>
@@ -290,6 +300,14 @@
             <div class="metric"><span>Received Frames</span><strong id="framesMetric">0</strong></div>
             <div class="metric"><span>Received Bytes</span><strong id="bytesMetric">0</strong></div>
             <div class="metric"><span>Received Samples</span><strong id="receivedSamplesMetric">0</strong></div>
+            <div class="metric"><span>Last Sequence</span><strong id="lastSequenceMetric">-</strong></div>
+            <div class="metric"><span>Sequence Gaps</span><strong id="sequenceGapMetric">0</strong></div>
+            <div class="metric"><span>Out of Order</span><strong id="outOfOrderMetric">0</strong></div>
+            <div class="metric"><span>Invalid Frames</span><strong id="invalidFrameMetric">0</strong></div>
+            <div class="metric"><span>Arrival Jitter Avg / Max</span><strong id="jitterMetric">-</strong></div>
+            <div class="metric"><span>Server PTS</span><strong id="serverPtsMetric">-</strong></div>
+            <div class="metric"><span>Client Received</span><strong id="clientReceivedMetric">-</strong></div>
+            <div class="metric"><span>Estimated Drift</span><strong id="driftMetric">-</strong></div>
             <div class="metric"><span>Played Samples</span><strong id="playedSamplesMetric">0</strong></div>
             <div class="metric"><span>Underruns</span><strong id="underrunMetric">0</strong></div>
             <div class="metric"><span>Overflows</span><strong id="overflowMetric">0</strong></div>
