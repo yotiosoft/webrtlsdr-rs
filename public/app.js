@@ -38,6 +38,8 @@ const elements = {
   webrtcAudioLevelMetric: document.querySelector("#webrtcAudioLevelMetric"),
   webrtcServerSessionsMetric: document.querySelector("#webrtcServerSessionsMetric"),
   webrtcServerAudioMetric: document.querySelector("#webrtcServerAudioMetric"),
+  webrtcServerEncodeMetric: document.querySelector("#webrtcServerEncodeMetric"),
+  webrtcServerReliabilityMetric: document.querySelector("#webrtcServerReliabilityMetric"),
   webrtcServerAudioErrorMetric: document.querySelector("#webrtcServerAudioErrorMetric"),
   webrtcCandidatePairMetric: document.querySelector("#webrtcCandidatePairMetric"),
   webrtcTransportMetric: document.querySelector("#webrtcTransportMetric"),
@@ -110,6 +112,13 @@ const state = {
     serverActiveSessions: 0,
     serverAudioFramesSent: 0,
     serverAudioBytesSent: 0,
+    serverFramesEncoded: 0,
+    serverOpusBytesEncoded: 0,
+    serverSendErrors: 0,
+    serverUnderrunSilenceFrames: 0,
+    serverEncoderErrors: 0,
+    serverSourceLaggedBlocks: 0,
+    serverEncodeTimeMaxUs: 0,
     serverAudioError: null,
     lastError: null,
   },
@@ -344,6 +353,8 @@ function renderWebRtc() {
   elements.webrtcAudioLevelMetric.textContent = rtc.audioLevel === null ? "-" : rtc.audioLevel.toFixed(4);
   elements.webrtcServerSessionsMetric.textContent = rtc.serverActiveSessions.toLocaleString();
   elements.webrtcServerAudioMetric.textContent = `${rtc.serverAudioFramesSent.toLocaleString()} / ${rtc.serverAudioBytesSent.toLocaleString()}`;
+  elements.webrtcServerEncodeMetric.textContent = `${rtc.serverFramesEncoded.toLocaleString()} / ${rtc.serverOpusBytesEncoded.toLocaleString()} / ${rtc.serverEncodeTimeMaxUs.toLocaleString()} us`;
+  elements.webrtcServerReliabilityMetric.textContent = `${rtc.serverUnderrunSilenceFrames.toLocaleString()} / ${rtc.serverSendErrors.toLocaleString()} / ${rtc.serverEncoderErrors.toLocaleString()} / ${rtc.serverSourceLaggedBlocks.toLocaleString()}`;
   elements.webrtcServerAudioErrorMetric.textContent = rtc.serverAudioError || "-";
   elements.webrtcCandidatePairMetric.textContent = rtc.selectedCandidatePair;
   elements.webrtcTransportMetric.textContent = rtc.transportState;
@@ -375,6 +386,13 @@ function resetWebRtcStats() {
   state.webrtc.serverActiveSessions = 0;
   state.webrtc.serverAudioFramesSent = 0;
   state.webrtc.serverAudioBytesSent = 0;
+  state.webrtc.serverFramesEncoded = 0;
+  state.webrtc.serverOpusBytesEncoded = 0;
+  state.webrtc.serverSendErrors = 0;
+  state.webrtc.serverUnderrunSilenceFrames = 0;
+  state.webrtc.serverEncoderErrors = 0;
+  state.webrtc.serverSourceLaggedBlocks = 0;
+  state.webrtc.serverEncodeTimeMaxUs = 0;
   state.webrtc.serverAudioError = null;
   state.webrtc.lastError = null;
 }
@@ -450,8 +468,15 @@ async function refreshWebRtcStats() {
     try {
       const serverStats = await api("api/webrtc/stats");
       state.webrtc.serverActiveSessions = serverStats.active_sessions || 0;
-      state.webrtc.serverAudioFramesSent = serverStats.audio_frames_sent || 0;
+      state.webrtc.serverAudioFramesSent = serverStats.audio_frames_sent || serverStats.frames_sent || 0;
       state.webrtc.serverAudioBytesSent = serverStats.audio_bytes_sent || 0;
+      state.webrtc.serverFramesEncoded = serverStats.frames_encoded || 0;
+      state.webrtc.serverOpusBytesEncoded = serverStats.opus_bytes_encoded || 0;
+      state.webrtc.serverSendErrors = serverStats.send_errors || 0;
+      state.webrtc.serverUnderrunSilenceFrames = serverStats.underrun_silence_frames || 0;
+      state.webrtc.serverEncoderErrors = serverStats.encoder_errors || 0;
+      state.webrtc.serverSourceLaggedBlocks = serverStats.source_lagged_blocks || 0;
+      state.webrtc.serverEncodeTimeMaxUs = serverStats.encode_time_max_us || 0;
       state.webrtc.serverAudioError = serverStats.last_audio_send_error || null;
     } catch (error) {
       state.webrtc.serverAudioError = error.message;

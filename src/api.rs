@@ -28,10 +28,11 @@ pub struct ApiState {
 
 impl ApiState {
     fn new(webrtc_config: WebRtcConfig) -> Self {
+        let audio_stream = AudioStreamHub::default();
         Self {
             session: Arc::new(Mutex::new(SessionState::default())),
-            audio_stream: AudioStreamHub::default(),
-            webrtc: Arc::new(WebRtcSessionManager::new(webrtc_config)),
+            audio_stream: audio_stream.clone(),
+            webrtc: Arc::new(WebRtcSessionManager::new(webrtc_config, audio_stream)),
         }
     }
 }

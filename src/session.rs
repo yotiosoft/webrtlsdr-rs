@@ -375,7 +375,10 @@ fn receive_loop(
                 let pcm_frame_bytes = pcm_frame.as_ref().map(|frame| frame.payload.len());
 
                 if let Ok(mut latest_audio_block) = latest_audio_block.lock() {
-                    *latest_audio_block = Some(audio_block);
+                    *latest_audio_block = Some(audio_block.clone());
+                }
+                if !audio_block.samples.is_empty() {
+                    audio_stream.publish_audio_block(audio_block);
                 }
                 if let Some(frame) = pcm_frame {
                     if let Ok(mut latest_pcm_frame) = latest_pcm_frame.lock() {

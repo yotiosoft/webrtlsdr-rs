@@ -9,32 +9,43 @@ use axum::extract::ws::{Message, WebSocket};
 use serde::Serialize;
 use tokio::sync::broadcast;
 
-use crate::audio::{
-    PCM_FRAME_V1_FORMAT_I16LE, PCM_FRAME_V1_HEADER_LEN, PCM_FRAME_V1_VERSION, PcmFrame,
+use crate::{
+    audio::{PCM_FRAME_V1_FORMAT_I16LE, PCM_FRAME_V1_HEADER_LEN, PCM_FRAME_V1_VERSION, PcmFrame},
+    dsp::AudioBlock,
 };
 
 const AUDIO_CHANNEL_CAPACITY: usize = 32;
+const DSP_AUDIO_CHANNEL_CAPACITY: usize = 64;
 const DEFAULT_AUDIO_SAMPLE_RATE_HZ: u32 = 48_000;
 const WEBSOCKET_SEND_TIMEOUT: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone)]
 pub struct AudioStreamHub {
     sender: broadcast::Sender<PcmFrame>,
+    audio_sender: broadcast::Sender<AudioBlock>,
     stats: Arc<Mutex<StreamStats>>,
 }
 
 impl Default for AudioStreamHub {
     fn default() -> Self {
         let (sender, _) = broadcast::channel(AUDIO_CHANNEL_CAPACITY);
+        let (audio_sender, _) = broadcast::channel(DSP_AUDIO_CHANNEL_CAPACITY);
 
         Self {
             sender,
+            audio_sender,
             stats: Arc::new(Mutex::new(StreamStats::default())),
         }
     }
 }
 
 impl AudioStreamHub {
+    pub fn publish_audio_block(&self, block: AudioBlock) {
+        if let Err(error) = self.audio_sender.send(block) {
+            tracing::trace!(%error, "published DSP audio block with no WebRTC subscribers");
+        }
+    }
+
     pub fn publish(&self, frame: PcmFrame) {
         self.record_frame(&frame);
 
@@ -58,6 +69,10 @@ impl AudioStreamHub {
 
     fn subscribe(&self) -> broadcast::Receiver<PcmFrame> {
         self.sender.subscribe()
+    }
+
+    pub fn subscribe_audio(&self) -> broadcast::Receiver<AudioBlock> {
+        self.audio_sender.subscribe()
     }
 
     fn record_client_connected(&self) {

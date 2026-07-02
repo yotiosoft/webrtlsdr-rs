@@ -235,14 +235,24 @@ and accepts browser SDP offers at:
 POST /api/webrtc/offer
 ```
 
-The browser UI includes a WebRTC PoC panel with Start WebRTC Audio, Play WebRTC
+The browser UI includes a WebRTC panel with Start WebRTC Audio, Play WebRTC
 Audio, and Stop WebRTC Audio controls. It creates an `RTCPeerConnection`, adds a
 recvonly audio transceiver, opens a small diagnostics data channel, waits for
 browser ICE gathering to complete, posts the complete SDP offer, applies the
 Rust-generated SDP answer, and attaches the remote audio track to an `<audio>`
-element. Step 15 sends a paced 20 ms silent Opus audio packet on a server-side
-`TrackLocalStaticSample`; SDR audio and a real Opus encoder remain planned for
-Step 16.
+element. Step 16 connects the existing 48 kHz mono SDR/DSP audio output to a
+20 ms frame buffer, encodes each 960-sample frame with Opus, and writes the
+encoded samples to a server-side `TrackLocalStaticSample`. Short underruns are
+filled with encoded silence so WebRTC pacing stays stable.
+
+WebRTC audio defaults are 48 kHz, mono, 20 ms frames, 32 kbps Opus bitrate, and
+Opus complexity 5. These can be adjusted with:
+
+```sh
+WEBRTLSDR_WEBRTC_AUDIO_ENABLED=true
+WEBRTLSDR_WEBRTC_OPUS_BITRATE_BPS=32000
+WEBRTLSDR_WEBRTC_OPUS_COMPLEXITY=5
+```
 
 The panel shows signaling, ICE, peer connection, candidate pair, transport, byte
 counters, inbound audio RTP packets/bytes/loss/jitter/concealment/audio level
@@ -268,12 +278,23 @@ firewalls, or the public Internet, plan on TURN rather than only STUN. Under
 `/rtl-sdr/`, the frontend still resolves signaling and stats URLs relative to
 the served base path.
 
-To verify Step 15, run `cargo run`, open the browser UI, click Start WebRTC
-Audio, and confirm Remote Track becomes `audio:live`, the audio element has a
-remote stream, Playback is `playing` or Play WebRTC Audio reports any autoplay
-rejection, and Inbound Packets / Bytes increases. Stop WebRTC Audio should close
-the peer connection and stop the server audio send task; starting again should
-create a fresh session.
+To verify Step 16, run `cargo run`, open the browser UI, reload devices, connect
+the RTL-SDR, tune frequency/sample-rate/gain, click Start Receiving, then click
+Start WebRTC Audio. Confirm Remote Track becomes `audio:live`, the audio element
+has a remote stream, Playback is `playing` or Play WebRTC Audio reports any
+autoplay rejection, Inbound Packets / Bytes increases, and server stats show
+encoded/sent frames increasing. Stop WebRTC Audio should close the peer
+connection and stop the server audio send task; starting again should create a
+fresh session.
+
+The WebSocket PCM panel remains available as PCM Diagnostics / fallback. It can
+run alongside WebRTC for comparison, but on small systems you may prefer to run
+only one playback path while measuring CPU.
+
+The Opus Rust crate is `opus` (`MIT/Apache-2.0`) and links through
+`audiopus_sys`/libopus. libopus is BSD-style licensed and includes a
+royalty-free patent license. The existing `webrtc` crate remains MIT licensed;
+`librtlsdr` licensing considerations are unchanged.
 
 The `stream` section of `/api/session/stats` reports active WebSocket clients,
 frames, bytes, samples, last sequence, last PTS, dropped frames, lagged
@@ -289,15 +310,20 @@ The server serves a minimal browser UI at:
 http://127.0.0.1:3000/
 ```
 
-To try live audio from a browser, run `cargo run`, open the URL, reload devices,
-select an RTL-SDR, connect, tune a frequency such as `100000000`, apply the
-sample rate and gain settings, start receiving, then press Start Audio. The page
-connects to `/ws/audio`, reads the initial PCM metadata message, converts binary
-signed 16-bit little-endian mono PCM frames to `Float32Array` samples, and plays
-them through an AudioWorklet. The PCM diagnostics panel shows transport state,
-AudioContext state, server/browser sample rates, received frames and bytes,
-buffered milliseconds, target and initial buffer milliseconds, underruns,
-overflows, dropped samples, watermarks, and the last browser-side audio error.
+To try the primary live-audio path from a browser, run `cargo run`, open the
+URL, reload devices, select an RTL-SDR, connect, tune a frequency such as
+`100000000`, apply the sample rate and gain settings, start receiving, then press
+Start WebRTC Audio. The browser receives Opus over WebRTC and plays it through
+the `<audio>` element.
+
+For PCM diagnostics, press Start Audio in the Audio panel. The page connects to
+`/ws/audio-v1` by default, reads the initial PCM metadata message, converts
+binary signed 16-bit little-endian mono PCM frames to `Float32Array` samples,
+and plays them through an AudioWorklet. The PCM diagnostics panel shows
+transport state, AudioContext state, server/browser sample rates, received
+frames and bytes, buffered milliseconds, target and initial buffer milliseconds,
+underruns, overflows, dropped samples, watermarks, and the last browser-side
+audio error.
 
 AudioWorklet requires a secure browser context. For development from another
 host, use an SSH tunnel and open the app as localhost:

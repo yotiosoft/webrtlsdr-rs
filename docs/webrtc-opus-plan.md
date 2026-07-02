@@ -2,6 +2,8 @@
 
 Research date: 2026-06-28 JST.
 
+Implementation update: Step 16 now connects the 48 kHz mono SDR/DSP audio stream to a 20 ms Opus encoder and WebRTC audio track. PCM WebSocket routes remain diagnostics/fallback.
+
 ## Goal
 
 Move the default browser listening path from raw PCM over WebSocket to WebRTC
