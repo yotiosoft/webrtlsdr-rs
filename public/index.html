@@ -113,7 +113,7 @@
         grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
         grid-template-areas:
           "receiver webrtc"
-          "audio webrtc";
+          "diagnostics webrtc";
         align-items: start;
         gap: 18px;
       }
@@ -126,8 +126,8 @@
         grid-area: webrtc;
       }
 
-      .audio-panel {
-        grid-area: audio;
+      .diagnostics-panel {
+        grid-area: diagnostics;
       }
 
       .panel {
@@ -159,6 +159,37 @@
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 10px;
+      }
+
+      .mode-row {
+        display: grid;
+        grid-template-columns: minmax(120px, auto) 1fr;
+        gap: 12px;
+        align-items: center;
+      }
+
+      .mode-label {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      details {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+      }
+
+      summary {
+        min-height: 48px;
+        display: flex;
+        align-items: center;
+        cursor: pointer;
+        padding: 0 16px;
+        font-weight: 700;
+      }
+
+      details > .stack {
+        padding: 0 16px 16px;
       }
 
       audio {
@@ -233,11 +264,12 @@
           grid-template-areas:
             "receiver"
             "webrtc"
-            "audio";
+            "diagnostics";
         }
 
         .fields,
-        .metrics {
+        .metrics,
+        .mode-row {
           grid-template-columns: 1fr;
         }
       }
@@ -301,11 +333,15 @@
         </section>
 
         <section class="panel stack webrtc-panel">
-          <h2>WebRTC PoC</h2>
+          <h2>Primary Playback</h2>
+          <div class="mode-row">
+            <span class="mode-label">Mode</span>
+            <strong id="playbackModeMetric">WebRTC</strong>
+          </div>
           <div class="row">
-            <button id="createWebRtcButton" class="primary" type="button">Start WebRTC Audio</button>
-            <button id="playWebRtcAudioButton" type="button">Play WebRTC Audio</button>
-            <button id="closeWebRtcButton" type="button">Stop WebRTC Audio</button>
+            <button id="createWebRtcButton" class="primary" type="button">Start Audio</button>
+            <button id="playWebRtcAudioButton" type="button">Play Audio</button>
+            <button id="closeWebRtcButton" type="button">Stop Audio</button>
           </div>
           <audio id="webrtcAudioElement" controls playsinline></audio>
           <div class="metrics">
@@ -337,8 +373,9 @@
           </div>
         </section>
 
-        <section class="panel stack audio-panel">
-          <h2>Audio</h2>
+        <details class="diagnostics-panel">
+          <summary>Diagnostics / Legacy PCM</summary>
+          <div class="stack">
           <label>
             PCM Transport
             <select id="audioProtocolSelect">
@@ -347,8 +384,8 @@
             </select>
           </label>
           <div class="row">
-            <button id="startAudioButton" class="primary" type="button">Start Audio</button>
-            <button id="stopAudioButton" type="button">Stop Audio</button>
+            <button id="startAudioButton" type="button">Start PCM Diagnostics</button>
+            <button id="stopAudioButton" type="button">Stop PCM Diagnostics</button>
           </div>
           <div class="metrics">
             <div class="metric"><span>Transport</span><strong id="wsMetric">disconnected</strong></div>
@@ -381,7 +418,8 @@
             <div class="metric"><span>Server Frames / Bytes</span><strong id="streamBroadcastMetric">0 / 0</strong></div>
             <div class="metric"><span>Server Drops / Lagged</span><strong id="streamDropMetric">0 / 0</strong></div>
           </div>
-        </section>
+          </div>
+        </details>
       </div>
     </main>
     <script type="module" src="app.js"></script>

@@ -22,6 +22,7 @@ const elements = {
   playWebRtcAudioButton: document.querySelector("#playWebRtcAudioButton"),
   closeWebRtcButton: document.querySelector("#closeWebRtcButton"),
   webrtcAudioElement: document.querySelector("#webrtcAudioElement"),
+  playbackModeMetric: document.querySelector("#playbackModeMetric"),
   webrtcSessionMetric: document.querySelector("#webrtcSessionMetric"),
   webrtcSignalingMetric: document.querySelector("#webrtcSignalingMetric"),
   webrtcIceGatheringMetric: document.querySelector("#webrtcIceGatheringMetric"),
@@ -85,6 +86,7 @@ const state = {
   socket: null,
   audioContext: null,
   workletNode: null,
+  defaultPlaybackMode: "webrtc",
   webrtc: {
     peerConnection: null,
     dataChannel: null,
@@ -330,6 +332,7 @@ function renderAudio() {
 function renderWebRtc() {
   const rtc = state.webrtc;
   const open = Boolean(rtc.peerConnection);
+  elements.playbackModeMetric.textContent = state.defaultPlaybackMode === "webrtc" ? "WebRTC" : state.defaultPlaybackMode;
   const connected = rtc.connectionState === "connected" || rtc.iceConnectionState === "connected";
   const connecting = open && !connected && rtc.connectionState !== "failed";
   const tone = connected ? "good" : rtc.connectionState === "failed" ? "bad" : "";
@@ -505,6 +508,7 @@ function stopWebRtcStatsTimer() {
 async function loadWebRtcConfig() {
   const config = await api("api/webrtc/config");
   state.webrtc.iceServers = config.ice_servers || [];
+  state.defaultPlaybackMode = config.default_playback_mode || "webrtc";
   renderWebRtc();
 }
 
@@ -519,6 +523,9 @@ async function playWebRtcAudio() {
 }
 
 async function createWebRtcSession() {
+  if (state.socket) {
+    setMessage("WebRTC is the primary playback path; PCM diagnostics is still connected for comparison.");
+  }
   resetWebRtcStats();
   const config = await api("api/webrtc/config");
   state.webrtc.iceServers = config.ice_servers || [];
@@ -562,6 +569,8 @@ async function createWebRtcSession() {
     renderWebRtc();
   });
 
+  let createdSessionId = null;
+
   try {
     update();
     const offer = await peerConnection.createOffer();
@@ -572,12 +581,16 @@ async function createWebRtcSession() {
       type: localDescription.type,
       sdp: localDescription.sdp,
     });
+    createdSessionId = answer.session_id;
     state.webrtc.sessionId = answer.session_id;
     await peerConnection.setRemoteDescription({ type: answer.type, sdp: answer.sdp });
     update();
     startWebRtcStatsTimer();
   } catch (error) {
     peerConnection.close();
+    if (createdSessionId) {
+      await api(`api/webrtc/sessions/${encodeURIComponent(createdSessionId)}`, { method: "DELETE" }).catch(() => {});
+    }
     state.webrtc.peerConnection = null;
     state.webrtc.dataChannel = null;
     state.webrtc.remoteStream = null;
@@ -858,6 +871,9 @@ function parsePcmV1Frame(buffer) {
 }
 
 async function startAudio() {
+  if (state.webrtc.peerConnection) {
+    setMessage("PCM diagnostics is running alongside WebRTC; stop one path when measuring CPU on small systems.");
+  }
   resetAudioStats();
   state.audio.wsState = "connecting";
   state.audio.lastError = null;
@@ -1003,6 +1019,7 @@ elements.connectButton.addEventListener("click", () =>
 elements.disconnectButton.addEventListener("click", () =>
   runAction(async () => {
     await stopAudio();
+    await closeWebRtcSession();
     await post("api/session/disconnect");
   }),
 );
@@ -1011,6 +1028,7 @@ elements.startButton.addEventListener("click", () => runAction(() => post("api/s
 elements.stopButton.addEventListener("click", () =>
   runAction(async () => {
     await stopAudio();
+    await closeWebRtcSession();
     await post("api/session/stop");
   }),
 );

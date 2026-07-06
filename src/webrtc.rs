@@ -47,6 +47,7 @@ const MAX_OPUS_PACKET_BYTES: usize = 4_000;
 pub struct WebRtcConfig {
     pub ice_servers: Vec<String>,
     pub audio: WebRtcAudioConfig,
+    pub default_playback_mode: PlaybackMode,
 }
 
 impl Default for WebRtcConfig {
@@ -54,6 +55,43 @@ impl Default for WebRtcConfig {
         Self {
             ice_servers: Vec::new(),
             audio: WebRtcAudioConfig::default(),
+            default_playback_mode: PlaybackMode::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlaybackMode {
+    WebRtc,
+    PcmDiagnostics,
+    LegacyPcm,
+}
+
+impl Default for PlaybackMode {
+    fn default() -> Self {
+        Self::WebRtc
+    }
+}
+
+impl PlaybackMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::WebRtc => "webrtc",
+            Self::PcmDiagnostics => "pcm-diagnostics",
+            Self::LegacyPcm => "legacy-pcm",
+        }
+    }
+}
+
+impl std::str::FromStr for PlaybackMode {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "webrtc" => Ok(Self::WebRtc),
+            "pcm" | "pcm-diagnostics" | "diagnostics" => Ok(Self::PcmDiagnostics),
+            "legacy" | "legacy-pcm" => Ok(Self::LegacyPcm),
+            _ => Err(format!("unsupported playback mode {value}")),
         }
     }
 }
@@ -106,6 +144,7 @@ pub struct OfferResponse {
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct WebRtcConfigResponse {
     pub ice_servers: Vec<String>,
+    pub default_playback_mode: &'static str,
     pub audio: WebRtcAudioConfigResponse,
 }
 
@@ -149,7 +188,7 @@ pub struct WebRtcSessionManager {
     config: WebRtcConfig,
     audio_stream: AudioStreamHub,
     next_session: Mutex<u64>,
-    sessions: Mutex<HashMap<String, WebRtcSession>>,
+    sessions: Arc<Mutex<HashMap<String, WebRtcSession>>>,
     audio_stats: Arc<WebRtcAudioStats>,
 }
 
@@ -182,7 +221,7 @@ impl WebRtcSessionManager {
             config,
             audio_stream,
             next_session: Mutex::new(1),
-            sessions: Mutex::new(HashMap::new()),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
             audio_stats: Arc::new(WebRtcAudioStats::default()),
         }
     }
@@ -190,6 +229,7 @@ impl WebRtcSessionManager {
     pub fn config_response(&self) -> WebRtcConfigResponse {
         WebRtcConfigResponse {
             ice_servers: self.config.ice_servers.clone(),
+            default_playback_mode: self.config.default_playback_mode.as_str(),
             audio: WebRtcAudioConfigResponse {
                 enabled: self.config.audio.enabled,
                 sample_rate_hz: self.config.audio.sample_rate_hz,
@@ -256,19 +296,19 @@ impl WebRtcSessionManager {
         let peer_connection = self.new_peer_connection().await?;
         let (audio_track, audio_sender) = self.add_audio_track(&peer_connection).await?;
         let state_session_id = session_id.clone();
-        let state_peer_connection = Arc::clone(&peer_connection);
+        let state_sessions = Arc::clone(&self.sessions);
 
         peer_connection.on_peer_connection_state_change(Box::new(move |state| {
             let session_id = state_session_id.clone();
-            let peer_connection = Arc::clone(&state_peer_connection);
+            let sessions = Arc::clone(&state_sessions);
             Box::pin(async move {
                 tracing::info!(%session_id, ?state, "WebRTC peer connection state changed");
                 if matches!(
                     state,
                     RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed
                 ) {
-                    if let Err(error) = peer_connection.close().await {
-                        tracing::warn!(%session_id, %error, "failed to close WebRTC peer connection after terminal state");
+                    if let Err(error) = close_session_entry(&sessions, &session_id).await {
+                        tracing::warn!(%session_id, %error, "failed to clean up terminal WebRTC session");
                     }
                 }
             })
@@ -330,20 +370,7 @@ impl WebRtcSessionManager {
     }
 
     pub async fn close(&self, session_id: &str) -> anyhow::Result<bool> {
-        let session = self.sessions.lock().await.remove(session_id);
-        if let Some(session) = session {
-            tracing::info!(%session_id, created_at = ?session.created_at, state = ?session.connection_state, "closing WebRTC session");
-            session.audio_send_task.abort();
-            session.rtcp_read_task.abort();
-            session
-                .peer_connection
-                .close()
-                .await
-                .context("failed to close WebRTC peer connection")?;
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+        close_session_entry(&self.sessions, session_id).await
     }
 
     #[cfg(test)]
@@ -409,6 +436,26 @@ impl WebRtcSessionManager {
             .await
             .context("failed to add WebRTC audio track")?;
         Ok((track, sender))
+    }
+}
+
+async fn close_session_entry(
+    sessions: &Arc<Mutex<HashMap<String, WebRtcSession>>>,
+    session_id: &str,
+) -> anyhow::Result<bool> {
+    let session = sessions.lock().await.remove(session_id);
+    if let Some(session) = session {
+        tracing::info!(%session_id, created_at = ?session.created_at, state = ?session.connection_state, "closing WebRTC session");
+        session.audio_send_task.abort();
+        session.rtcp_read_task.abort();
+        session
+            .peer_connection
+            .close()
+            .await
+            .context("failed to close WebRTC peer connection")?;
+        Ok(true)
+    } else {
+        Ok(false)
     }
 }
 

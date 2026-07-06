@@ -1,6 +1,6 @@
 use std::{env, net::SocketAddr};
 
-use crate::webrtc::{WebRtcAudioConfig, WebRtcConfig};
+use crate::webrtc::{PlaybackMode, WebRtcAudioConfig, WebRtcConfig};
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -27,14 +27,25 @@ impl Config {
             .collect();
         let audio = WebRtcAudioConfig {
             enabled: env_bool("WEBRTLSDR_WEBRTC_AUDIO_ENABLED", true)?,
+            frame_duration_ms: env_u64("WEBRTLSDR_WEBRTC_FRAME_DURATION_MS", 20)?,
             opus_bitrate_bps: env_i32("WEBRTLSDR_WEBRTC_OPUS_BITRATE_BPS", 32_000)?,
             opus_complexity: env_i32("WEBRTLSDR_WEBRTC_OPUS_COMPLEXITY", 5)?,
             ..WebRtcAudioConfig::default()
         };
+        let default_playback_mode = env::var("WEBRTLSDR_DEFAULT_PLAYBACK_MODE")
+            .ok()
+            .map(|value| value.parse::<PlaybackMode>())
+            .transpose()
+            .map_err(anyhow::Error::msg)?
+            .unwrap_or_default();
 
         Ok(Self {
             listen_addr,
-            webrtc: WebRtcConfig { ice_servers, audio },
+            webrtc: WebRtcConfig {
+                ice_servers,
+                audio,
+                default_playback_mode,
+            },
         })
     }
 
@@ -48,6 +59,15 @@ impl Config {
 }
 
 fn env_i32(name: &str, default: i32) -> anyhow::Result<i32> {
+    env::var(name)
+        .ok()
+        .map(|value| value.parse())
+        .transpose()
+        .map(|value| value.unwrap_or(default))
+        .map_err(Into::into)
+}
+
+fn env_u64(name: &str, default: u64) -> anyhow::Result<u64> {
     env::var(name)
         .ok()
         .map(|value| value.parse())
@@ -90,7 +110,7 @@ mod tests {
     }
 
     #[test]
-    fn default_webrtc_audio_config_matches_step_16() {
+    fn default_webrtc_audio_config_matches_step_17() {
         let audio = WebRtcAudioConfig::default();
         assert!(audio.enabled);
         assert_eq!(audio.sample_rate_hz, 48_000);
@@ -98,5 +118,11 @@ mod tests {
         assert_eq!(audio.frame_duration_ms, 20);
         assert_eq!(audio.opus_bitrate_bps, 32_000);
         assert_eq!(audio.opus_complexity, 5);
+    }
+
+    #[test]
+    fn default_playback_mode_is_webrtc() {
+        assert_eq!(PlaybackMode::default(), PlaybackMode::WebRtc);
+        assert_eq!(PlaybackMode::WebRtc.as_str(), "webrtc");
     }
 }
