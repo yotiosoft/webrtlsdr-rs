@@ -239,6 +239,11 @@
         color: var(--bad);
       }
 
+      .pill.warn {
+        border-color: #fde68a;
+        color: var(--warn);
+      }
+
       .error {
         min-height: 22px;
         color: var(--bad);
@@ -338,6 +343,7 @@
             <span class="mode-label">Mode</span>
             <strong id="playbackModeMetric">WebRTC</strong>
           </div>
+          <div class="row"><span id="webrtcQualityState" class="pill">Quality unavailable</span></div>
           <div class="row">
             <button id="createWebRtcButton" class="primary" type="button">Start Audio</button>
             <button id="playWebRtcAudioButton" type="button">Play Audio</button>
@@ -358,10 +364,14 @@
             <div class="metric"><span>Inbound Packets / Bytes</span><strong id="webrtcInboundMetric">0 / 0</strong></div>
             <div class="metric"><span>Inbound Lost / Jitter</span><strong id="webrtcInboundQualityMetric">0 / -</strong></div>
             <div class="metric"><span>Concealment</span><strong id="webrtcConcealmentMetric">-</strong></div>
+            <div class="metric"><span>Playout Acceleration + / -</span><strong id="webrtcPlayoutAdjustmentMetric">-</strong></div>
             <div class="metric"><span>Audio Level</span><strong id="webrtcAudioLevelMetric">-</strong></div>
+            <div class="metric"><span>Total Audio Energy</span><strong id="webrtcAudioEnergyMetric">-</strong></div>
             <div class="metric"><span>Server Sessions</span><strong id="webrtcServerSessionsMetric">0</strong></div>
             <div class="metric"><span>Server Sent Frames / Bytes</span><strong id="webrtcServerAudioMetric">0 / 0</strong></div>
             <div class="metric"><span>Server Encoded / Bytes / Max</span><strong id="webrtcServerEncodeMetric">0 / 0 / 0 us</strong></div>
+            <div class="metric"><span>Encode Avg / P95</span><strong id="webrtcServerEncodeTimingMetric">-</strong></div>
+            <div class="metric"><span>Send Interval Avg / Jitter</span><strong id="webrtcServerSendTimingMetric">-</strong></div>
             <div class="metric"><span>Server Silence / Send / Enc / Lag</span><strong id="webrtcServerReliabilityMetric">0 / 0 / 0 / 0</strong></div>
             <div class="metric"><span>Server Audio Error</span><strong id="webrtcServerAudioErrorMetric">-</strong></div>
             <div class="metric"><span>Selected Candidate Pair</span><strong id="webrtcCandidatePairMetric" class="mono">-</strong></div>
@@ -371,6 +381,10 @@
             <div class="metric"><span>Configured ICE Servers</span><strong id="webrtcIceServersMetric" class="mono">-</strong></div>
             <div class="metric"><span>Last Error</span><strong id="webrtcErrorMetric">-</strong></div>
           </div>
+          <details>
+            <summary>Advanced audio settings</summary>
+            <div class="stack"><div id="webrtcAudioConfigMetric" class="mono">Loading…</div><small>Environment settings apply to new WebRTC sessions after a server restart.</small></div>
+          </details>
         </section>
 
         <details class="diagnostics-panel">

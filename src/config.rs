@@ -30,8 +30,10 @@ impl Config {
             frame_duration_ms: env_u64("WEBRTLSDR_WEBRTC_FRAME_DURATION_MS", 20)?,
             opus_bitrate_bps: env_i32("WEBRTLSDR_WEBRTC_OPUS_BITRATE_BPS", 32_000)?,
             opus_complexity: env_i32("WEBRTLSDR_WEBRTC_OPUS_COMPLEXITY", 5)?,
+            silence_on_underrun: env_bool("WEBRTLSDR_WEBRTC_SILENCE_ON_UNDERRUN", true)?,
             ..WebRtcAudioConfig::default()
         };
+        audio.validate()?;
         let default_playback_mode = env::var("WEBRTLSDR_DEFAULT_PLAYBACK_MODE")
             .ok()
             .map(|value| value.parse::<PlaybackMode>())
@@ -118,6 +120,7 @@ mod tests {
         assert_eq!(audio.frame_duration_ms, 20);
         assert_eq!(audio.opus_bitrate_bps, 32_000);
         assert_eq!(audio.opus_complexity, 5);
+        assert!(audio.silence_on_underrun);
     }
 
     #[test]

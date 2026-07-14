@@ -253,7 +253,16 @@ WEBRTLSDR_WEBRTC_AUDIO_ENABLED=true
 WEBRTLSDR_WEBRTC_FRAME_DURATION_MS=20
 WEBRTLSDR_WEBRTC_OPUS_BITRATE_BPS=32000
 WEBRTLSDR_WEBRTC_OPUS_COMPLEXITY=5
+WEBRTLSDR_WEBRTC_SILENCE_ON_UNDERRUN=true
 ```
+
+Frame duration accepts 10, 20, or 40 ms (480, 960, or 1920 samples at 48 kHz).
+Bitrate accepts 6000–510000 bps and complexity accepts 0–10. Invalid values stop
+startup with a configuration error. Codec settings are process configuration;
+restart the server and start a new WebRTC session after changing them. The
+balanced default is 20 ms / 32 kbps / complexity 5. For lower CPU use, try
+40 ms / 24 kbps / complexity 3; for lower latency, try 10 ms / 32–48 kbps /
+complexity 3–5.
 
 The panel shows signaling, ICE, peer connection, candidate pair, transport, byte
 counters, inbound audio RTP packets/bytes/loss/jitter/concealment/audio level
@@ -263,6 +272,12 @@ WebRTC session/audio counters from:
 ```sh
 curl http://127.0.0.1:3000/api/webrtc/stats
 ```
+
+The UI also reports playout acceleration/deceleration, total audio energy,
+encode average/p95, send interval average/jitter, late frames, and a compact
+Good/Warning/Poor assessment. Unsupported browser fields remain unavailable.
+See [docs/webrtc-audio-tuning.md](docs/webrtc-audio-tuning.md) for Raspberry Pi
+5 measurement and troubleshooting procedures.
 
 LAN use is the default assumption. Configure optional STUN/TURN URLs with a
 comma-separated environment variable when needed:
