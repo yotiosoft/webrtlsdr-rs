@@ -71,6 +71,10 @@ pub fn router(webrtc_config: WebRtcConfig) -> Router {
             axum::routing::post(session::sample_rate),
         )
         .route("/api/session/gain", axum::routing::post(session::gain))
+        .route(
+            "/api/session/demodulation",
+            axum::routing::post(session::demodulation),
+        )
         .with_state(ApiState::new(webrtc_config))
 }
 

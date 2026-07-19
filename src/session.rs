@@ -10,7 +10,7 @@ use std::{
 
 use crate::{
     audio::{PcmEncoder, PcmFrame, PcmStats},
-    dsp::{AudioBlock, DspConfig, DspProcessor, DspStats},
+    dsp::{AudioBlock, DemodulationMode, DspConfig, DspProcessor, DspStats},
     sdr::{self, OpenedDevice, SdrDeviceInfo, SdrError},
     stream::AudioStreamHub,
 };
@@ -89,9 +89,59 @@ impl SessionState {
 
         if let Some(settings) = &mut self.settings {
             settings.sample_rate_hz = Some(actual_sample_rate_hz);
+            settings.demodulation.input_sample_rate_hz = actual_sample_rate_hz;
         }
 
         Ok(actual_sample_rate_hz)
+    }
+
+    pub fn set_demodulation(
+        &mut self,
+        mode: DemodulationMode,
+        update: DemodulationUpdate,
+        audio_stream: AudioStreamHub,
+    ) -> Result<DspConfig, SessionError> {
+        if self.connected.is_none() && self.receiver.is_none() {
+            return Err(SessionError::NotConnected);
+        }
+        let was_receiving = self.receiver.is_some();
+        let input_rate = self
+            .connected
+            .as_ref()
+            .map(OpenedDevice::sample_rate_hz)
+            .or_else(|| {
+                self.settings
+                    .as_ref()
+                    .map(|s| s.demodulation.input_sample_rate_hz)
+            })
+            .unwrap_or(1_024_000);
+        let mut config = DspConfig::preset(mode, input_rate);
+        if let Some(v) = update.channel_bandwidth_hz {
+            config.channel_bandwidth_hz = v;
+        }
+        if let Some(v) = update.audio_lowpass_hz {
+            config.audio_lowpass_hz = v;
+        }
+        if update.deemphasis_us.is_some() {
+            config.deemphasis_us = update.deemphasis_us;
+        }
+        if update.squelch_threshold.is_some() {
+            config.squelch_threshold = update.squelch_threshold;
+        }
+        if let Some(v) = update.bfo_offset_hz {
+            config.bfo_offset_hz = v;
+        }
+        config.validate().map_err(SessionError::InvalidDspConfig)?;
+        if was_receiving {
+            self.stop_receiving()?;
+        }
+        if let Some(settings) = &mut self.settings {
+            settings.demodulation = config;
+        }
+        if was_receiving {
+            self.start_receiving(audio_stream)?;
+        }
+        Ok(config)
     }
 
     pub fn set_auto_gain(&mut self) -> Result<(), SessionError> {
@@ -135,7 +185,13 @@ impl SessionState {
         }
 
         let device = self.connected.take().ok_or(SessionError::NotConnected)?;
-        self.receiver = Some(ReceiveHandle::spawn(device, audio_stream));
+        let mut config = self
+            .settings
+            .as_ref()
+            .map(|s| s.demodulation)
+            .unwrap_or_else(|| DspConfig::am(device.sample_rate_hz()));
+        config.input_sample_rate_hz = device.sample_rate_hz();
+        self.receiver = Some(ReceiveHandle::spawn(device, audio_stream, config));
 
         Ok(())
     }
@@ -194,7 +250,7 @@ impl SessionState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SessionSnapshot {
     pub device: Option<SdrDeviceInfo>,
     pub settings: Option<ReceiverSettings>,
@@ -214,6 +270,7 @@ pub enum SessionError {
     NotConnected,
     ReceiveThreadPanicked,
     Sdr(SdrError),
+    InvalidDspConfig(&'static str),
 }
 
 impl fmt::Display for SessionError {
@@ -224,17 +281,39 @@ impl fmt::Display for SessionError {
             Self::NotConnected => write!(formatter, "no RTL-SDR device is connected"),
             Self::ReceiveThreadPanicked => write!(formatter, "RTL-SDR receive thread panicked"),
             Self::Sdr(error) => write!(formatter, "{error}"),
+            Self::InvalidDspConfig(error) => write!(formatter, "{error}"),
         }
     }
 }
 
 impl std::error::Error for SessionError {}
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ReceiverSettings {
     pub center_frequency_hz: Option<u32>,
     pub sample_rate_hz: Option<u32>,
     pub gain_mode: GainMode,
+    pub demodulation: DspConfig,
+}
+
+impl Default for ReceiverSettings {
+    fn default() -> Self {
+        Self {
+            center_frequency_hz: None,
+            sample_rate_hz: None,
+            gain_mode: GainMode::Auto,
+            demodulation: DspConfig::am(1_024_000),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DemodulationUpdate {
+    pub channel_bandwidth_hz: Option<u32>,
+    pub audio_lowpass_hz: Option<u32>,
+    pub deemphasis_us: Option<u32>,
+    pub squelch_threshold: Option<f32>,
+    pub bfo_offset_hz: Option<i32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -270,10 +349,12 @@ struct ReceiveHandle {
 }
 
 impl ReceiveHandle {
-    fn spawn(mut device: OpenedDevice, audio_stream: AudioStreamHub) -> Self {
+    fn spawn(mut device: OpenedDevice, audio_stream: AudioStreamHub, config: DspConfig) -> Self {
         let info = device.info().clone();
         let input_sample_rate_hz = device.sample_rate_hz();
-        let dsp = DspProcessor::new(DspConfig::am(input_sample_rate_hz));
+        let mut config = config;
+        config.input_sample_rate_hz = input_sample_rate_hz;
+        let dsp = DspProcessor::new(config);
         let pcm = PcmEncoder::default();
         let stop_requested = Arc::new(AtomicBool::new(false));
         let stats = Arc::new(Mutex::new(SessionStats {
@@ -393,7 +474,7 @@ fn receive_loop(
                         index = device.info().index,
                         audio_samples,
                         pcm_frame_bytes,
-                        "processed RTL-SDR IQ block through AM DSP"
+                        "processed RTL-SDR IQ block through demodulation DSP"
                     );
                 }
             }

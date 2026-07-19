@@ -7,6 +7,13 @@ const elements = {
   sampleRateInput: document.querySelector("#sampleRateInput"),
   gainModeSelect: document.querySelector("#gainModeSelect"),
   gainInput: document.querySelector("#gainInput"),
+  demodulationModeSelect: document.querySelector("#demodulationModeSelect"),
+  channelBandwidthInput: document.querySelector("#channelBandwidthInput"),
+  audioLowpassInput: document.querySelector("#audioLowpassInput"),
+  deemphasisInput: document.querySelector("#deemphasisInput"),
+  squelchInput: document.querySelector("#squelchInput"),
+  bfoInput: document.querySelector("#bfoInput"),
+  applyDemodulationButton: document.querySelector("#applyDemodulationButton"),
   applySettingsButton: document.querySelector("#applySettingsButton"),
   startButton: document.querySelector("#startButton"),
   stopButton: document.querySelector("#stopButton"),
@@ -286,6 +293,7 @@ function renderSession() {
   elements.deviceSelect.disabled = state.busy || connected;
   elements.reloadDevicesButton.disabled = state.busy;
   elements.gainInput.disabled = elements.gainModeSelect.value !== "manual";
+  elements.applyDemodulationButton.disabled = state.busy || !connected;
 }
 
 function syncSettingsInputs() {
@@ -294,6 +302,17 @@ function syncSettingsInputs() {
   if (settings?.sample_rate_hz) elements.sampleRateInput.value = settings.sample_rate_hz;
   if (settings?.gain_mode) elements.gainModeSelect.value = settings.gain_mode;
   if (settings?.gain_tenths_db !== undefined) elements.gainInput.value = settings.gain_tenths_db;
+  const d = settings?.demodulation;
+  if (d) { elements.demodulationModeSelect.value=d.mode; elements.channelBandwidthInput.value=d.channel_bandwidth_hz; elements.audioLowpassInput.value=d.audio_lowpass_hz; elements.deemphasisInput.value=d.deemphasis_us || 0; elements.squelchInput.value=d.squelch_threshold ?? ""; elements.bfoInput.value=d.bfo_offset_hz; }
+}
+
+const demodPresets = { am:[10000,5000,0,0], wbfm:[180000,15000,75,0], nbfm:[12500,3500,0,0], usb:[3000,3000,0,1500], lsb:[3000,3000,0,-1500] };
+function applyDemodPreset() { const p=demodPresets[elements.demodulationModeSelect.value]; [elements.channelBandwidthInput.value,elements.audioLowpassInput.value,elements.deemphasisInput.value,elements.bfoInput.value]=p; }
+async function applyDemodulation() {
+  const body={ mode:elements.demodulationModeSelect.value, channel_bandwidth_hz:numberFromInput(elements.channelBandwidthInput,"Channel bandwidth"), audio_lowpass_hz:numberFromInput(elements.audioLowpassInput,"Audio low-pass"), bfo_offset_hz:Math.trunc(Number(elements.bfoInput.value)||0) };
+  const deemphasis=Number(elements.deemphasisInput.value); if(deemphasis>0) body.deemphasis_us=Math.trunc(deemphasis);
+  if(elements.squelchInput.value!=="") body.squelch_threshold=Number(elements.squelchInput.value);
+  await post("api/session/demodulation",body);
 }
 
 function samplesToMs(samples, sampleRate) {
@@ -1068,6 +1087,8 @@ async function stopAudio() {
 elements.reloadDevicesButton.addEventListener("click", loadDevices);
 elements.deviceSelect.addEventListener("change", render);
 elements.gainModeSelect.addEventListener("change", render);
+elements.demodulationModeSelect.addEventListener("change", applyDemodPreset);
+elements.applyDemodulationButton.addEventListener("click", () => runAction(applyDemodulation));
 elements.connectButton.addEventListener("click", () =>
   runAction(async () => {
     const index = selectedDeviceIndex();

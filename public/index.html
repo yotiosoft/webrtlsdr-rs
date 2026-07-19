@@ -309,6 +309,13 @@
 
           <div class="fields">
             <label>
+              Demodulation Mode
+              <select id="demodulationModeSelect">
+                <option value="am">AM</option><option value="wbfm">WBFM</option><option value="nbfm">NBFM</option>
+                <option value="usb">USB (experimental)</option><option value="lsb">LSB (experimental)</option>
+              </select>
+            </label>
+            <label>
               Frequency Hz
               <input id="frequencyInput" inputmode="numeric" type="number" min="1" step="1" value="100000000" />
             </label>
@@ -328,6 +335,15 @@
               <input id="gainInput" inputmode="numeric" type="number" step="1" value="280" />
             </label>
           </div>
+
+          <details><summary>Demodulation settings</summary><div class="stack"><div class="fields">
+            <label>Channel bandwidth Hz<input id="channelBandwidthInput" type="number" min="1" value="10000" /></label>
+            <label>Audio low-pass Hz<input id="audioLowpassInput" type="number" min="1" value="5000" /></label>
+            <label>De-emphasis µs (0 = off)<input id="deemphasisInput" type="number" min="0" value="0" /></label>
+            <label>Squelch threshold (blank = off)<input id="squelchInput" type="number" min="0" max="1" step="0.001" /></label>
+            <label>BFO offset Hz<input id="bfoInput" type="number" step="1" value="0" /></label>
+          </div><button id="applyDemodulationButton" type="button">Apply Demodulation</button>
+          <small>Changing mode while receiving safely restarts the DSP pipeline. USB/LSB are experimental.</small></div></details>
 
           <div class="row">
             <button id="applySettingsButton" type="button">Apply Settings</button>

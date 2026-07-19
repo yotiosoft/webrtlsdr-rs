@@ -3,8 +3,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     audio::PcmStats,
-    dsp::DspStats,
-    session::{GainMode, ReceiverSettings, SessionError, SessionSnapshot, SessionStats},
+    dsp::{DemodulationMode, DspConfig, DspStats},
+    session::{
+        DemodulationUpdate, GainMode, ReceiverSettings, SessionError, SessionSnapshot, SessionStats,
+    },
     stream::StreamStats,
 };
 
@@ -44,6 +46,7 @@ pub async fn connect(
             unreachable!("connect cannot join a receive thread")
         }
         Err(SessionError::NotConnected) => unreachable!("connect cannot require a prior session"),
+        Err(SessionError::InvalidDspConfig(_)) => unreachable!("connect cannot validate DSP"),
     }
 }
 
@@ -83,6 +86,9 @@ pub async fn start(State(state): State<ApiState>) -> Result<Json<ReceiveStateRes
         Err(SessionError::ReceiveThreadPanicked) => {
             unreachable!("start cannot join a receive thread")
         }
+        Err(SessionError::InvalidDspConfig(_)) => {
+            Err(ApiError::bad_request("invalid demodulation settings"))
+        }
     }
 }
 
@@ -105,6 +111,7 @@ pub async fn stop(State(state): State<ApiState>) -> Result<Json<ReceiveStateResp
             tracing::error!(%error, "failed to stop RTL-SDR reception");
             Err(ApiError::internal("failed to stop RTL-SDR reception"))
         }
+        Err(SessionError::InvalidDspConfig(_)) => unreachable!("stop cannot validate DSP"),
     }
 }
 
@@ -151,6 +158,7 @@ pub async fn tune(
             unreachable!("tuning cannot join a receive thread")
         }
         Err(SessionError::AlreadyConnected) => unreachable!("tuning cannot create a session"),
+        Err(SessionError::InvalidDspConfig(_)) => unreachable!("tuning cannot validate DSP"),
     }
 }
 
@@ -187,6 +195,7 @@ pub async fn sample_rate(
         Err(SessionError::AlreadyConnected) => {
             unreachable!("sample-rate setting cannot create a session")
         }
+        Err(SessionError::InvalidDspConfig(_)) => unreachable!("sample rate cannot validate DSP"),
     }
 }
 
@@ -221,6 +230,7 @@ pub async fn gain(
             Err(SessionError::AlreadyConnected) => {
                 unreachable!("gain setting cannot create a session")
             }
+            Err(SessionError::InvalidDspConfig(_)) => unreachable!("gain cannot validate DSP"),
         },
         GainModeRequest::Manual => {
             let gain_tenths_db = request.gain_tenths_db.ok_or_else(|| {
@@ -248,7 +258,92 @@ pub async fn gain(
                 Err(SessionError::AlreadyConnected) => {
                     unreachable!("gain setting cannot create a session")
                 }
+                Err(SessionError::InvalidDspConfig(_)) => unreachable!("gain cannot validate DSP"),
             }
+        }
+    }
+}
+
+pub async fn demodulation(
+    State(state): State<ApiState>,
+    Json(request): Json<DemodulationRequest>,
+) -> Result<Json<DemodulationResponse>, ApiError> {
+    let mode = request.mode.into();
+    let update = DemodulationUpdate {
+        channel_bandwidth_hz: request.channel_bandwidth_hz,
+        audio_lowpass_hz: request.audio_lowpass_hz,
+        deemphasis_us: request.deemphasis_us,
+        squelch_threshold: request.squelch_threshold,
+        bfo_offset_hz: request.bfo_offset_hz,
+    };
+    let mut session = state
+        .session
+        .lock()
+        .map_err(|_| ApiError::internal("failed to update RTL-SDR session"))?;
+    session
+        .set_demodulation(mode, update, state.audio_stream.clone())
+        .map(|config| Json(DemodulationResponse::from(config)))
+        .map_err(|error| match error {
+            SessionError::NotConnected => ApiError::conflict("no RTL-SDR device is connected"),
+            SessionError::InvalidDspConfig(_) => {
+                ApiError::bad_request("invalid demodulation settings")
+            }
+            _ => ApiError::internal("failed to change demodulation mode"),
+        })
+}
+
+#[derive(Deserialize)]
+pub struct DemodulationRequest {
+    mode: DemodulationModeRequest,
+    channel_bandwidth_hz: Option<u32>,
+    audio_lowpass_hz: Option<u32>,
+    deemphasis_us: Option<u32>,
+    squelch_threshold: Option<f32>,
+    bfo_offset_hz: Option<i32>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum DemodulationModeRequest {
+    Am,
+    Wbfm,
+    Nbfm,
+    Usb,
+    Lsb,
+}
+impl From<DemodulationModeRequest> for DemodulationMode {
+    fn from(v: DemodulationModeRequest) -> Self {
+        match v {
+            DemodulationModeRequest::Am => Self::Am,
+            DemodulationModeRequest::Wbfm => Self::Wbfm,
+            DemodulationModeRequest::Nbfm => Self::Nbfm,
+            DemodulationModeRequest::Usb => Self::Usb,
+            DemodulationModeRequest::Lsb => Self::Lsb,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct DemodulationResponse {
+    mode: &'static str,
+    rf_sample_rate_hz: u32,
+    audio_sample_rate_hz: u32,
+    channel_bandwidth_hz: u32,
+    audio_lowpass_hz: u32,
+    deemphasis_us: Option<u32>,
+    squelch_threshold: Option<f32>,
+    bfo_offset_hz: i32,
+}
+impl From<DspConfig> for DemodulationResponse {
+    fn from(c: DspConfig) -> Self {
+        Self {
+            mode: c.mode.as_str(),
+            rf_sample_rate_hz: c.input_sample_rate_hz,
+            audio_sample_rate_hz: c.output_sample_rate_hz,
+            channel_bandwidth_hz: c.channel_bandwidth_hz,
+            audio_lowpass_hz: c.audio_lowpass_hz,
+            deemphasis_us: c.deemphasis_us,
+            squelch_threshold: c.squelch_threshold,
+            bfo_offset_hz: c.bfo_offset_hz,
         }
     }
 }
@@ -341,6 +436,7 @@ pub struct SettingsResponse {
     gain_mode: GainModeResponse,
     #[serde(skip_serializing_if = "Option::is_none")]
     gain_tenths_db: Option<i32>,
+    demodulation: DemodulationResponse,
 }
 
 impl From<ReceiverSettings> for SettingsResponse {
@@ -355,6 +451,7 @@ impl From<ReceiverSettings> for SettingsResponse {
             sample_rate_hz: settings.sample_rate_hz,
             gain_mode,
             gain_tenths_db,
+            demodulation: DemodulationResponse::from(settings.demodulation),
         }
     }
 }
@@ -398,6 +495,9 @@ impl SessionStatsResponse {
 
 #[derive(Serialize)]
 pub struct DspStatsResponse {
+    mode: &'static str,
+    input_sample_rate_hz: u32,
+    channel_bandwidth_hz: u32,
     iq_bytes_processed: u64,
     audio_samples_produced: u64,
     audio_sample_rate_hz: u32,
@@ -405,12 +505,17 @@ pub struct DspStatsResponse {
     last_processed_unix_ms: Option<u64>,
     audio_peak: f32,
     audio_rms: f32,
+    squelch_open: bool,
+    demodulator_errors: u64,
     last_error: Option<String>,
 }
 
 impl From<DspStats> for DspStatsResponse {
     fn from(stats: DspStats) -> Self {
         Self {
+            mode: stats.mode,
+            input_sample_rate_hz: stats.input_sample_rate_hz,
+            channel_bandwidth_hz: stats.channel_bandwidth_hz,
             iq_bytes_processed: stats.iq_bytes_processed,
             audio_samples_produced: stats.audio_samples_produced,
             audio_sample_rate_hz: stats.audio_sample_rate_hz,
@@ -418,6 +523,8 @@ impl From<DspStats> for DspStatsResponse {
             last_processed_unix_ms: stats.last_processed_unix_ms,
             audio_peak: stats.audio_peak,
             audio_rms: stats.audio_rms,
+            squelch_open: stats.squelch_open,
+            demodulator_errors: stats.demodulator_errors,
             last_error: stats.last_error,
         }
     }
@@ -488,5 +595,30 @@ impl From<StreamStats> for StreamStatsResponse {
             last_client_disconnected_unix_ms: stats.last_client_disconnected_unix_ms,
             last_error: stats.last_error,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn demodulation_request_deserializes_optional_settings() {
+        let request: DemodulationRequest = serde_json::from_str(
+            r#"{"mode":"wbfm","channel_bandwidth_hz":180000,"deemphasis_us":75}"#,
+        )
+        .expect("valid demodulation request");
+        assert!(matches!(request.mode, DemodulationModeRequest::Wbfm));
+        assert_eq!(request.channel_bandwidth_hz, Some(180_000));
+        assert_eq!(request.deemphasis_us, Some(75));
+    }
+
+    #[test]
+    fn demodulation_response_serializes_unified_mode_name() {
+        let response =
+            DemodulationResponse::from(DspConfig::preset(DemodulationMode::Usb, 1_024_000));
+        let json = serde_json::to_value(response).expect("serializable response");
+        assert_eq!(json["mode"], "usb");
+        assert_eq!(json["audio_sample_rate_hz"], 48_000);
     }
 }

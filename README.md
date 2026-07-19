@@ -2,6 +2,28 @@
 
 Rust backend skeleton for a future browser-controlled RTL-SDR server.
 
+## Demodulation modes
+
+The receiver supports AM, mono WBFM, NBFM, and experimental USB/LSB. All modes
+produce 48 kHz mono audio for both the primary WebRTC/Opus path and PCM
+diagnostics. WBFM stereo/RDS, advanced SSB AGC/Hilbert filtering, and advanced
+noise reduction are not implemented yet.
+
+| Mode | Typical use | RF sample rate | Default channel/audio bandwidth |
+|---|---|---:|---:|
+| AM | broadcast/airband AM | 1.024 MHz | 10/5 kHz |
+| WBFM | broadcast FM (mono) | 2.048 MHz | 180/15 kHz |
+| NBFM | voice radio | 1.024 MHz | 12.5/3.5 kHz |
+| USB/LSB | experimental SSB voice | 1.024 MHz | 3/3 kHz |
+
+Use the browser selector or `POST /api/session/demodulation`, for example
+`{"mode":"wbfm"}`. Optional fields are `channel_bandwidth_hz`,
+`audio_lowpass_hz`, `deemphasis_us`, `squelch_threshold`, and `bfo_offset_hz`.
+Changing mode during reception stops and restarts the receive DSP so old filter,
+FM phase, BFO, and resampler state cannot leak into the new mode. The current
+configuration is returned by `GET /api/session`; DSP stats report mode, RF/audio
+rates, bandwidth, audio RMS/peak, squelch state, and demodulator error count.
+
 ## Run
 
 ```sh
