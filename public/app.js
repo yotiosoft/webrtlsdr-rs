@@ -95,6 +95,7 @@ const elements = {
 const state = {
   devices: [],
   session: { connected: false, receiving: false },
+  demodulationDirty: false,
   busy: false,
   socket: null,
   audioContext: null,
@@ -303,21 +304,22 @@ function syncSettingsInputs() {
   if (settings?.sample_rate_hz) elements.sampleRateInput.value = settings.sample_rate_hz;
   if (settings?.gain_mode) elements.gainModeSelect.value = settings.gain_mode;
   if (settings?.gain_tenths_db !== undefined) elements.gainInput.value = settings.gain_tenths_db;
-  const d = settings?.demodulation;
+  const d = state.demodulationDirty ? null : settings?.demodulation;
   if (d) { elements.demodulationModeSelect.value=d.mode; elements.channelBandwidthInput.value=d.channel_bandwidth_hz; elements.audioLowpassInput.value=d.audio_lowpass_hz; elements.deemphasisInput.value=d.deemphasis_us || 0; elements.squelchInput.value=d.squelch_threshold ?? ""; elements.bfoInput.value=d.bfo_offset_hz; }
 }
 
 const demodPresets = { am:[10000,5000,0,0], wbfm:[180000,15000,75,0], nbfm:[12500,3500,0,0], usb:[3000,3000,0,1500], lsb:[3000,3000,0,-1500] };
 function applyDemodPreset() { const p=demodPresets[elements.demodulationModeSelect.value]; [elements.channelBandwidthInput.value,elements.audioLowpassInput.value,elements.deemphasisInput.value,elements.bfoInput.value]=p; }
-async function changeDemodulationMode() {
+function changeDemodulationMode() {
   applyDemodPreset();
-  if (state.session.connected) await runAction(applyDemodulation);
+  state.demodulationDirty = true;
 }
 async function applyDemodulation() {
   const body={ mode:elements.demodulationModeSelect.value, channel_bandwidth_hz:numberFromInput(elements.channelBandwidthInput,"Channel bandwidth"), audio_lowpass_hz:numberFromInput(elements.audioLowpassInput,"Audio low-pass"), bfo_offset_hz:Math.trunc(Number(elements.bfoInput.value)||0) };
   const deemphasis=Number(elements.deemphasisInput.value); if(deemphasis>0) body.deemphasis_us=Math.trunc(deemphasis);
   if(elements.squelchInput.value!=="") body.squelch_threshold=Number(elements.squelchInput.value);
   await post("api/session/demodulation",body);
+  state.demodulationDirty = false;
 }
 
 function samplesToMs(samples, sampleRate) {

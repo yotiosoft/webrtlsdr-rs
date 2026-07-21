@@ -184,13 +184,35 @@ impl SessionState {
             return Err(SessionError::AlreadyReceiving);
         }
 
-        let device = self.connected.take().ok_or(SessionError::NotConnected)?;
+        let configured_sample_rate_hz = self
+            .settings
+            .as_ref()
+            .map(|settings| settings.demodulation.input_sample_rate_hz)
+            .unwrap_or(1_024_000);
+        let actual_sample_rate_hz = {
+            let device = self.connected.as_mut().ok_or(SessionError::NotConnected)?;
+            let current_sample_rate_hz = device.sample_rate_hz();
+            if current_sample_rate_hz == 0 {
+                device
+                    .set_sample_rate_hz(configured_sample_rate_hz)
+                    .map_err(SessionError::Sdr)?;
+                device.sample_rate_hz()
+            } else {
+                current_sample_rate_hz
+            }
+        };
         let mut config = self
             .settings
             .as_ref()
             .map(|s| s.demodulation)
-            .unwrap_or_else(|| DspConfig::am(device.sample_rate_hz()));
-        config.input_sample_rate_hz = device.sample_rate_hz();
+            .unwrap_or_else(|| DspConfig::am(actual_sample_rate_hz));
+        config.input_sample_rate_hz = actual_sample_rate_hz;
+        config.validate().map_err(SessionError::InvalidDspConfig)?;
+        if let Some(settings) = &mut self.settings {
+            settings.sample_rate_hz = Some(actual_sample_rate_hz);
+            settings.demodulation = config;
+        }
+        let device = self.connected.take().ok_or(SessionError::NotConnected)?;
         self.receiver = Some(ReceiveHandle::spawn(device, audio_stream, config));
 
         Ok(())
