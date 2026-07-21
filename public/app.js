@@ -293,6 +293,7 @@ function renderSession() {
   elements.deviceSelect.disabled = state.busy || connected;
   elements.reloadDevicesButton.disabled = state.busy;
   elements.gainInput.disabled = elements.gainModeSelect.value !== "manual";
+  elements.demodulationModeSelect.disabled = state.busy;
   elements.applyDemodulationButton.disabled = state.busy || !connected;
 }
 
@@ -308,6 +309,10 @@ function syncSettingsInputs() {
 
 const demodPresets = { am:[10000,5000,0,0], wbfm:[180000,15000,75,0], nbfm:[12500,3500,0,0], usb:[3000,3000,0,1500], lsb:[3000,3000,0,-1500] };
 function applyDemodPreset() { const p=demodPresets[elements.demodulationModeSelect.value]; [elements.channelBandwidthInput.value,elements.audioLowpassInput.value,elements.deemphasisInput.value,elements.bfoInput.value]=p; }
+async function changeDemodulationMode() {
+  applyDemodPreset();
+  if (state.session.connected) await runAction(applyDemodulation);
+}
 async function applyDemodulation() {
   const body={ mode:elements.demodulationModeSelect.value, channel_bandwidth_hz:numberFromInput(elements.channelBandwidthInput,"Channel bandwidth"), audio_lowpass_hz:numberFromInput(elements.audioLowpassInput,"Audio low-pass"), bfo_offset_hz:Math.trunc(Number(elements.bfoInput.value)||0) };
   const deemphasis=Number(elements.deemphasisInput.value); if(deemphasis>0) body.deemphasis_us=Math.trunc(deemphasis);
@@ -1087,7 +1092,7 @@ async function stopAudio() {
 elements.reloadDevicesButton.addEventListener("click", loadDevices);
 elements.deviceSelect.addEventListener("change", render);
 elements.gainModeSelect.addEventListener("change", render);
-elements.demodulationModeSelect.addEventListener("change", applyDemodPreset);
+elements.demodulationModeSelect.addEventListener("change", changeDemodulationMode);
 elements.applyDemodulationButton.addEventListener("click", () => runAction(applyDemodulation));
 elements.connectButton.addEventListener("click", () =>
   runAction(async () => {
